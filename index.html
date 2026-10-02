@@ -1,0 +1,1366 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>html{-webkit-text-size-adjust:100%;background:var(--bg)}</style>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="AI議事録">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f4f5f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1220" media="(prefers-color-scheme: dark)">
+<title>AI議事録</title>
+</head>
+<body>
+<style>
+/* 画面: 下のナビ（記録・ToDo・振り返り・設定）＋中央の録音ボタン。記録の詳細は 要約｜文字起こし｜ToDo｜AIに質問 のタブ */
+:root{
+  --bg:#f4f5f9; --surface:#ffffff; --fg:#161b2e; --muted:#5b6378; --line:#d9dde8;
+  --accent:#3949ab; --accent-soft:#e7e9f7; --accent-fg:#ffffff;
+  --rec:#d23b3b; --rec-soft:#fbe7e7; --ok:#1c7a4c; --ok-soft:#e2f3ea; --warn:#8a5a00; --warn-soft:#fbf1dc;
+  --font-body:"BIZ UDPGothic","Yu Gothic UI","Hiragino Sans","Meiryo",system-ui,sans-serif;
+  --font-num:"BIZ UDGothic","Consolas","Menlo",monospace;
+  --shadow:0 1px 2px rgba(22,27,46,.06),0 3px 10px rgba(22,27,46,.06);
+  --nav-h:64px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1220; --surface:#181c2e; --fg:#e4e7f2; --muted:#9aa1b8; --line:#2b3150;
+  --accent:#8f9cf0; --accent-soft:#232a4d; --accent-fg:#0d1030;
+  --rec:#f07373; --rec-soft:#3b1d22; --ok:#5cc58f; --ok-soft:#173226; --warn:#e0b050; --warn-soft:#352a12; color-scheme:dark;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 3px 10px rgba(0,0,0,.25)}}
+:root[data-theme="dark"]{
+  --bg:#0f1220; --surface:#181c2e; --fg:#e4e7f2; --muted:#9aa1b8; --line:#2b3150;
+  --accent:#8f9cf0; --accent-soft:#232a4d; --accent-fg:#0d1030;
+  --rec:#f07373; --rec-soft:#3b1d22; --ok:#5cc58f; --ok-soft:#173226; --warn:#e0b050; --warn-soft:#352a12; color-scheme:dark;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 3px 10px rgba(0,0,0,.25)}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:16px;line-height:1.7;margin:0}
+.wrap{max-width:780px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + 20px) calc(env(safe-area-inset-right,0px) + 16px) calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 40px) calc(env(safe-area-inset-left,0px) + 16px)}
+h1{font-size:1.45rem;margin:0;line-height:1.3}
+h2{font-size:1.1rem;margin:22px 0 8px}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)} .small{font-size:.86rem}
+button{font:inherit;color:inherit;cursor:pointer}
+input,select,textarea{font:inherit;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-width:100%}
+textarea{width:100%;resize:vertical}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 16px;font-size:.95rem;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:700}
+.btn.danger{color:var(--rec)} .btn.sm{padding:3px 11px;font-size:.84rem}
+.btn:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.spacer{flex:1}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.chip{display:inline-block;border-radius:999px;padding:1px 10px;font-size:.8rem;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.chip.warn{background:var(--warn-soft);color:var(--warn)} .chip.ok{background:var(--ok-soft);color:var(--ok)} .chip.rec{background:var(--rec-soft);color:var(--rec)}
+.note{border-left:3px solid var(--warn);background:var(--warn-soft);padding:8px 12px;border-radius:0 8px 8px 0;font-size:.9rem;margin:10px 0}
+.empty{text-align:center;color:var(--muted);padding:48px 12px}
+
+/* ヘッダー */
+.top{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.logo{width:34px;height:34px;border-radius:9px;background:var(--accent);display:grid;place-items:center;flex:none}
+.logo svg{width:20px;height:20px;fill:var(--accent-fg)}
+.back{border:none;background:none;text-decoration:none;font-size:1.4rem;line-height:1;padding:4px 8px 4px 0;color:var(--accent)}
+
+/* 記録一覧 */
+.search{width:100%;margin-bottom:6px}
+.day{font-size:.88rem;color:var(--muted);margin:18px 0 6px;font-weight:700}
+.rec-item{display:block;width:100%;text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 14px;margin-bottom:8px;box-shadow:var(--shadow)}
+.rec-item:hover{border-color:var(--accent)}
+.rec-item .t{font-weight:700;overflow-wrap:anywhere}
+.rec-item .m{font-size:.84rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;margin-top:2px}
+.rec-item .p{font-size:.88rem;color:var(--muted);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* 下のナビ */
+nav.bar{position:fixed;left:0;right:0;bottom:0;height:calc(var(--nav-h) + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);
+  background:var(--surface);border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr 84px 1fr 1fr;z-index:20}
+nav.bar button{border:none;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:.74rem;color:var(--muted);gap:2px}
+nav.bar button svg{width:22px;height:22px;fill:currentColor}
+nav.bar button.on{color:var(--accent);font-weight:700}
+.fab{position:relative;top:-18px;width:66px;height:66px;margin:0 auto;border-radius:50%!important;background:var(--rec)!important;color:#fff!important;box-shadow:0 4px 14px rgba(210,59,59,.4)}
+.fab svg{width:28px!important;height:28px!important}
+
+/* 詳細のタブ */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:12px 0 14px;overflow-x:auto}
+.tabs button{border:none;background:none;padding:8px 12px;border-bottom:3px solid transparent;color:var(--muted);white-space:nowrap}
+.tabs button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:700}
+.title-in{width:100%;font-size:1.25rem;font-weight:700;border:1px solid transparent;background:none;padding:2px 6px;margin-left:-6px}
+.title-in:hover,.title-in:focus{border-color:var(--line);background:var(--surface)}
+
+/* 要約 */
+.sec{margin-bottom:14px}
+.sec h3{font-size:1rem;margin:0 0 4px;display:flex;align-items:center;gap:8px}
+.sec h3::before{content:"";width:4px;height:1em;background:var(--accent);border-radius:2px}
+.sec ul{margin:0;padding-left:1.3em}
+.sec li{margin:2px 0}
+.tpl-pick{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tpl-pick button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 12px;font-size:.86rem}
+.tpl-pick button.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.kw{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+
+/* 文字起こし */
+.seg{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.seg .tm{font-family:var(--font-num);font-size:.8rem;color:var(--muted);border:none;background:none;padding:0;text-align:left}
+.seg .tm:hover{color:var(--accent)}
+.spk{border:none;border-radius:999px;padding:0 10px;font-size:.8rem;font-weight:700;justify-self:start}
+.seg .tx{grid-column:1/-1;overflow-wrap:anywhere}
+.seg.playing{background:var(--accent-soft)}
+.spk-legend{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.player{position:sticky;top:0;background:var(--bg);padding:6px 0;z-index:5;display:flex;gap:8px;align-items:center}
+
+/* ToDo */
+.todo{display:grid;grid-template-columns:28px 1fr auto;gap:2px 10px;align-items:start;padding:10px 0;border-bottom:1px solid var(--line)}
+.todo input[type=checkbox]{width:20px;height:20px;margin-top:3px;accent-color:var(--accent)}
+.todo .what{overflow-wrap:anywhere}
+.todo.done .what{text-decoration:line-through;color:var(--muted)}
+.todo .meta{grid-column:2/-1;font-size:.84rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap}
+.todo .meta .late{color:var(--rec);font-weight:700}
+.todo .edit{border:none;background:none;color:var(--muted);font-size:.84rem}
+
+/* AIに質問 */
+.qa{margin-bottom:12px}
+.qa .q{font-weight:700}
+.qa .a{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:4px}
+.ask{display:flex;gap:8px;margin-top:8px}
+.ask textarea{flex:1;min-height:44px}
+
+/* 録音画面 */
+.recview{position:fixed;inset:0;background:var(--bg);z-index:40;display:flex;flex-direction:column;
+  padding:calc(env(safe-area-inset-top,0px) + 16px) 16px calc(env(safe-area-inset-bottom,0px) + 16px)}
+.recview .in{max-width:780px;width:100%;margin:0 auto;display:flex;flex-direction:column;flex:1;min-height:0}
+.clock{font-family:var(--font-num);font-size:2.6rem;text-align:center;letter-spacing:.04em;margin:6px 0 0}
+.state{text-align:center;color:var(--muted);font-size:.9rem;min-height:1.6em}
+.state .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--rec);margin-right:6px;animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.25}}
+.level{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:8px auto 12px;width:min(320px,80%)}
+.level i{display:block;height:100%;width:0;background:var(--rec);transition:width .1s}
+.live{flex:1;min-height:0;overflow-y:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.live p{margin:0 0 6px;overflow-wrap:anywhere}
+.live .interim{color:var(--muted)}
+.rec-ctl{display:flex;gap:14px;justify-content:center;align-items:center;margin-top:14px}
+.rbtn{width:64px;height:64px;border-radius:50%;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center}
+.rbtn svg{width:26px;height:26px;fill:var(--fg)}
+.rbtn.stop{width:76px;height:76px;background:var(--rec);border-color:var(--rec)}
+.rbtn.stop svg{fill:#fff}
+.rec-opts{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;font-size:.88rem;color:var(--muted)}
+
+/* 進行中の処理 */
+.busy{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.9rem;margin:8px 0}
+.spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;left:50%;bottom:calc(var(--nav-h) + 20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);
+  padding:8px 16px;border-radius:999px;font-size:.9rem;z-index:60;max-width:calc(100% - 32px);text-align:center}
+
+/* 設定 */
+.field{margin:14px 0}
+.field label{display:block;font-weight:700;margin-bottom:4px}
+.field .hint{font-size:.85rem;color:var(--muted);margin-top:4px}
+.switch{display:flex;gap:10px;align-items:flex-start}
+.switch input{width:20px;height:20px;margin-top:3px;accent-color:var(--accent);flex:none}
+
+/* ダイアログ */
+.sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--surface);width:min(560px,100%);border-radius:16px 16px 0 0;padding:18px 16px calc(env(safe-area-inset-bottom,0px) + 18px);max-height:85vh;overflow-y:auto}
+@media (min-width:640px){.sheet-bg{align-items:center}.sheet{border-radius:16px}}
+.sheet h3{margin:0 0 10px}
+
+@media (max-width:520px){
+  h1{font-size:1.25rem} .clock{font-size:2.2rem}
+  .tabs button{padding:8px 9px}
+}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+@media print{
+  nav.bar,.no-print,.tabs,.player,.tpl-pick,.ask,.back{display:none!important}
+  body{background:#fff;color:#000} .card{box-shadow:none;border:none;padding:0}
+  .wrap{padding:0;max-width:none}
+}
+</style>
+
+<div class="wrap" id="main"></div>
+<nav class="bar" id="nav" aria-label="メニュー">
+  <button data-go="home"><svg viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h10v2H4z"/></svg>記録</button>
+  <button data-go="todo"><svg viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>ToDo</button>
+  <button class="fab" id="fab" aria-label="録音を始める"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg></button>
+  <button data-go="daily"><svg viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 16H5V9h14zM7 11h5v5H7z"/></svg>振り返り</button>
+  <button data-go="settings"><svg viewBox="0 0 24 24"><path d="M3 6h9v2H3zm13 0h5v2h-5zm-3-2h2v6h-2zM3 16h3v2H3zm7 0h11v2H10zm-3-2h2v6H7z"/></svg>設定</button>
+</nav>
+<div id="overlay"></div>
+
+<script>
+// 端末内ルール（AIキーが無いとき・社外秘モードのとき）と、要約テンプレートの定義。
+// AIを使わず、言い回しで決定事項・ToDo・課題を拾う。node でも読める（test_rules.mjs が検査する）。
+(function (root) {
+"use strict";
+
+// 要約テンプレート。role はルール抽出でどの文を入れるか（AI要約では見出しだけ使う）
+const TEMPLATES = [
+  {id: "standard", name: "標準", desc: "どんな会話にも", sections: [["概要", "overview"], ["要点", "point"], ["ToDo", "todo"]]},
+  {id: "meeting", name: "会議", desc: "定例・社内会議", sections: [["概要", "overview"], ["決定事項", "decision"], ["議論のポイント", "point"], ["次回までの課題", "todo"]]},
+  {id: "tech", name: "技術打合せ", desc: "仕様・設計・現場の打合せ", sections: [["概要", "overview"], ["仕様・条件", "point"], ["決定事項", "decision"], ["未決・確認事項", "issue"], ["宿題", "todo"]]},
+  {id: "sales", name: "商談", desc: "お客様との打合せ", sections: [["概要", "overview"], ["先方の要望・課題", "issue"], ["提案・説明した内容", "point"], ["合意事項", "decision"], ["次のアクション", "todo"]]},
+  {id: "oneonone", name: "1on1・面談", desc: "面談・相談", sections: [["概要", "overview"], ["話したこと", "point"], ["悩み・気づき", "issue"], ["合意したこと", "decision"], ["フォローアップ", "todo"]]},
+  {id: "lecture", name: "講義・セミナー", desc: "聞いた内容の整理", sections: [["概要", "overview"], ["主なトピック", "topic"], ["重要なポイント", "point"], ["用語・キーワード", "keyword"], ["疑問点", "issue"]]},
+  {id: "idea", name: "アイデアメモ", desc: "ひとり言・思いつき", sections: [["概要", "overview"], ["アイデア", "point"], ["次に試すこと", "todo"]]},
+];
+
+const RE_DECISION = /決定|決まり|決めま|決めよう|ことにしま|ことにしよう|ことになりま|ことになった|で行きましょう|でいきましょう|で進めま|で進めよう|で進める|合意|確定|承認|了承|それでいきま|それで行きま|採用/;
+const RE_TODO = /お願いします|お願いできますか|お願いできれば|お願いしたい|頼みます|やっておきます|やっておいて|しておきます|しておいて|しといて|対応します|対応しておきます|確認します|確認しておきます|確認してもらえ|送ります|送っておきます|送付します|手配します|準備します|作成します|作っておきます|作ります|調べます|調べておきます|まとめます|まとめておきます|連絡します|連絡しておきます|共有します|提出します|見積もります|見積します|検討します|検討しておきます|までに/;
+const RE_ISSUE = /課題|問題|懸念|リスク|困って|困る|未定|決まってない|決まっていない|わからない|分からない|不明|要確認|確認が必要|気になる|心配|厳しい|足りない|間に合わない|[？?]$/;
+const RE_QUESTION = /(ですか|ますか|でしょうか|いいか|どうか)[。？?]?$|[？?]$/;
+const RE_FILLER = /^(えー|えっと|あの|その|まあ|うーん|はい|ええ|うん|そうですね|なるほど)[、。\s]*$/;
+const RE_KW = /打ち?合わ?せ|[一-龥々]{2,}|[ァ-ヶー]{3,}|[A-Za-z][A-Za-z0-9\-]{1,}/g;
+const RE_NOT_KW = /^(来週|今週|再来週|来月|今月|先週|先月|毎週|毎月|一度|もう一度)|確認$|^(メートル|ミリ|センチ|キロ|グラム|パーセント)$|^打ち?合わ?せ$/;
+const STOP = new Set(("今日 明日 昨日 今回 前回 次回 確認 大丈夫 感じ 方向 部分 場合 必要 予定 対応 自分 一応 結構 本当 全部 最初 最後 意味 状況 関係 問題 時間 今後 以上 以下 程度 相手 一緒 普通 多分 全然 基本 大体 一番 何回 ところ 皆さん お願い 検討 準備 連絡 共有 作成 決定 合意 課題 来週 今週 今月 来月 月末 毎日 先日 午前 午後 本日 当日 一旦 実際 了解 承知 失礼 ちょっと 気持 時点 段階 タイミング イメージ パターン ポイント スケジュール").split(" "));
+const WD = "日月火水木金土";
+
+function pad(n) { return String(n).padStart(2, "0"); }
+function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+function addDays(d, n) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() + n); return x; }
+function dueLabel(s) { const m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(s || ""); if (!m) return s || ""; const d = new Date(+m[1], m[2] - 1, +m[3]); return `${+m[2]}/${+m[3]}(${WD[d.getDay()]})`; }
+function day0(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+
+// 文字起こしの文に分ける（句点・疑問符・改行）
+function sentences(text) {
+  return String(text || "").split(/(?<=[。！？!?])|\n+/).map(s => s.trim()).filter(s => s && !RE_FILLER.test(s));
+}
+
+// 期限の言い回し → {label: 原文, iso: "YYYY-MM-DD" か ""}。base は録音日
+function parseDue(text, base) {
+  base = day0(base || new Date());
+  const t = String(text || "");
+  let m;
+  const ymd = (mo, d) => {   // 月日だけのときは、録音日より2か月以上前なら翌年とみなす
+    let y = base.getFullYear(), x = new Date(y, mo - 1, d);
+    if (x < addDays(base, -60)) x = new Date(y + 1, mo - 1, d);
+    return x;
+  };
+  if ((m = t.match(/(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})日?/))) return {label: m[0], iso: iso(new Date(+m[1], m[2] - 1, +m[3]))};
+  if ((m = t.match(/(\d{1,2})月(\d{1,2})日/))) return {label: m[0], iso: iso(ymd(+m[1], +m[2]))};
+  if ((m = t.match(/(?<![\d\/.])(\d{1,2})\/(\d{1,2})(?![\d\/.])/)) && +m[1] >= 1 && +m[1] <= 12 && +m[2] >= 1 && +m[2] <= 31) return {label: m[0], iso: iso(ymd(+m[1], +m[2]))};
+  if ((m = t.match(/明後日|あさって/))) return {label: m[0], iso: iso(addDays(base, 2))};
+  if ((m = t.match(/明日|あした/))) return {label: m[0], iso: iso(addDays(base, 1))};
+  if ((m = t.match(/今日中|本日中|今日まで|本日まで/))) return {label: m[0], iso: iso(base)};
+  if ((m = t.match(/(来週|今週|再来週)の?([日月火水木金土])曜/))) {
+    const wk = {"今週": 0, "来週": 1, "再来週": 2}[m[1]];
+    const mon = addDays(base, -((base.getDay() + 6) % 7));       // その週の月曜
+    return {label: m[0], iso: iso(addDays(mon, wk * 7 + (WD.indexOf(m[2]) + 6) % 7))};
+  }
+  if ((m = t.match(/(今週|来週|再来週)(中|いっぱい|末|まで)/))) {
+    const wk = {"今週": 0, "来週": 1, "再来週": 2}[m[1]];
+    const mon = addDays(base, -((base.getDay() + 6) % 7));
+    return {label: m[0], iso: iso(addDays(mon, wk * 7 + 4))};   // 金曜
+  }
+  if ((m = t.match(/([日月火水木金土])曜日?(まで|中|に)/))) {
+    let n = (WD.indexOf(m[1]) - base.getDay() + 7) % 7; if (n === 0) n = 7;
+    return {label: m[0], iso: iso(addDays(base, n))};
+  }
+  if ((m = t.match(/来月(中|末|いっぱい)/))) return {label: m[0], iso: iso(new Date(base.getFullYear(), base.getMonth() + 2, 0))};
+  if ((m = t.match(/今月(中|末|いっぱい)|月末/))) return {label: m[0], iso: iso(new Date(base.getFullYear(), base.getMonth() + 1, 0))};
+  if ((m = t.match(/(?<![\d月\/])(\d{1,2})日(まで|中|に|迄)/))) {
+    let x = new Date(base.getFullYear(), base.getMonth(), +m[1]);
+    if (x < base) x = new Date(base.getFullYear(), base.getMonth() + 1, +m[1]);
+    return {label: m[1] + "日", iso: iso(x)};
+  }
+  if ((m = t.match(/次回まで|次の打ち?合わせまで|次の会議まで|早めに|至急|急ぎで/))) return {label: m[0], iso: ""};
+  return {label: "", iso: ""};
+}
+
+// 担当者: 「〇〇さんに/が」→ 〇〇さん。「私が・こちらで」→ 話者。わからなければ空
+function parseWho(text, speaker) {
+  const t = String(text || "");
+  let m = t.match(/([一-龥々ァ-ヶーA-Za-z]{1,6})(さん|様|部長|課長|係長|主任|社長|くん|君)(に|が|は|で|、|の方で|から|も)/);
+  if (m && !/^(皆|みな|お客|先方|相手|担当)$/.test(m[1])) return m[1] + (m[2] === "君" ? "くん" : m[2]);
+  if (/(先方|お客様|お客さん)(に|が|で|から)/.test(t) && !/(先方|お客様|お客さん)に/.test(t)) return "先方";
+  if (/(私|僕|ぼく|わたし|自分|俺|こちら|弊社|うち)(が|で|の方で|から|も)/.test(t) || /(やっておきます|しておきます|対応します|確認します|送ります|手配します|準備します|作成します|調べます|まとめます|連絡します|共有します|提出します|作ります|検討します)/.test(t)) return speaker || "";
+  return "";
+}
+
+// よく出る言葉（固有の話題を表す）
+function keywords(text, n) {
+  const cnt = new Map();
+  for (const w of String(text || "").match(RE_KW) || []) {
+    if (STOP.has(w) || w.length > 12 || RE_NOT_KW.test(w)) continue;
+    cnt.set(w, (cnt.get(w) || 0) + 1);
+  }
+  return [...cnt.entries()].filter(([w, c]) => c >= 2 || w.length >= 4)
+    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length).slice(0, n || 8).map(e => e[0]);
+}
+
+function trimSentence(s, max) { s = s.replace(/^(それでは|それで|じゃあ|では|えー|えっと|あの|まあ|で)[、,\s]+/, ""); return s.length > (max || 90) ? s.slice(0, max || 90) + "…" : s; }
+
+// 文字起こし → 要約。segs: [{t, text, spk}]、speakers: {"1": "表示名"}、template: TEMPLATES の id
+function summarize(segs, templateId, base, speakers) {
+  const tpl = TEMPLATES.find(t => t.id === templateId) || TEMPLATES[0];
+  const name = k => (speakers && speakers[k]) || (k ? "Speaker " + k : "");
+  const sents = [];
+  for (const s of segs || []) for (const x of sentences(s.text)) sents.push({text: x, spk: s.spk, t: s.t});
+  const all = sents.map(s => s.text).join("");
+  const kws = keywords(all, 10);
+  const used = new Set();
+  const decisions = sents.filter(s => RE_DECISION.test(s.text) && s.text.length >= 6 && !RE_QUESTION.test(s.text));
+  decisions.forEach(s => used.add(s));
+  const todos = [];
+  for (const s of sents) {
+    if (!RE_TODO.test(s.text) || s.text.length < 6) continue;
+    const due = parseDue(s.text, base);
+    todos.push({who: parseWho(s.text, name(s.spk)), due: due.iso || due.label, what: trimSentence(s.text, 80), t: s.t});
+    used.add(s);
+  }
+  const issues = sents.filter(s => !used.has(s) && RE_ISSUE.test(s.text) && s.text.length >= 8);
+  issues.forEach(s => used.add(s));
+  const score = s => kws.reduce((a, k, i) => a + (s.text.includes(k) ? (10 - i) : 0), 0);
+  const points = sents.filter(s => !used.has(s) && s.text.length >= 12)
+    .map(s => ({s, v: score(s)})).filter(x => x.v > 0)
+    .sort((a, b) => b.v - a.v).slice(0, 6).map(x => x.s).sort((a, b) => a.t - b.t);
+  const firstReal = sents.filter(s => s.text.length >= 10).slice(0, 2).map(s => trimSentence(s.text, 70));
+  const overview = [];
+  if (!sents.length) overview.push("文字起こしがありません（無音か、音声認識が使えなかった可能性があります）");
+  if (kws.length) overview.push("主な話題: " + kws.slice(0, 5).join("、"));
+  if (firstReal.length) overview.push("冒頭: " + firstReal.join(" / "));
+  if (sents.length) overview.push(`決定事項 ${decisions.length}件・ToDo ${todos.length}件・課題 ${issues.length}件を言い回しから抽出（端末内ルール）`);
+  const byRole = {
+    overview: overview,
+    decision: decisions.map(s => trimSentence(s.text)),
+    point: points.map(s => trimSentence(s.text)),
+    issue: issues.slice(0, 8).map(s => trimSentence(s.text)),
+    todo: todos.map(t => [t.who && t.who + "：", t.what, t.due && `（期限 ${dueLabel(t.due)}）`].filter(Boolean).join("")),
+    topic: kws.slice(0, 6),
+    keyword: kws,
+  };
+  return {
+    title: kws.length ? kws.slice(0, 3).join("・") : "",
+    sections: tpl.sections.map(([h, role]) => ({heading: h, items: byRole[role] || []})),
+    todos: todos.map(({who, due, what}) => ({who, due, what})),
+    keywords: kws,
+  };
+}
+
+// 質問への簡易回答（AIなし）: 質問の言葉を含む発言を時刻つきで返す
+function search(segs, q, n) {
+  const words = (String(q).match(RE_KW) || []).filter(w => !STOP.has(w));
+  const ws = words.length ? words : String(q).replace(/[？?。、\s]/g, "").match(/.{2}/g) || [];
+  return (segs || []).map(s => ({s, v: ws.reduce((a, w) => a + (s.text.includes(w) ? w.length : 0), 0)}))
+    .filter(x => x.v > 0).sort((a, b) => b.v - a.v).slice(0, n || 6).map(x => x.s).sort((a, b) => a.t - b.t);
+}
+
+const api = {TEMPLATES, sentences, parseDue, parseWho, keywords, summarize, search, iso, dueLabel};
+if (typeof module !== "undefined" && module.exports) module.exports = api;
+else root.Rules = api;
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+<script>
+// AI議事録 本体。build.py が rules.js と一緒に app.html へ埋め込む。
+// 流れ: 録音(30秒ごとに区切る) → Groq Whisperで文字起こし → 約3,000字ごとにAIがメモ化(話者推定つき) → 停止後にテンプレートで要約
+// AIキーが無い・社外秘モードのときは、ブラウザの音声認識＋端末内ルール(rules.js)で動く。記録は端末のIndexedDBにだけ保存する。
+"use strict";
+const R = window.Rules;
+const $ = (s, el) => (el || document).querySelector(s);
+const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const WDAY = "日月火水木金土";
+const pad = n => String(n).padStart(2, "0");
+const fmtTime = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600); return (h ? h + ":" + pad(Math.floor(s / 60) % 60) : Math.floor(s / 60)) + ":" + pad(s % 60); };
+const fmtDay = ms => { const d = new Date(ms); return `${d.getMonth() + 1}月${d.getDate()}日(${WDAY[d.getDay()]})`; };
+const fmtClock = ms => { const d = new Date(ms); return pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+const dayKey = ms => R.iso(new Date(ms));
+const fmtDue = s => { const m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(s || ""); if (!m) return s || ""; const d = new Date(+m[1], m[2] - 1, +m[3]); return `${+m[2]}/${+m[3]}(${WDAY[d.getDay()]})`; };
+const isLate = s => /^\d{4}-\d\d-\d\d$/.test(s || "") && s < dayKey(Date.now());
+
+// ---------- 設定（localStorage。ブラウザごと） ----------
+const STORE_KEY = "aigiji.v1";
+const MODELS = [["openai/gpt-oss-120b", "GPT-OSS 120B（おすすめ）"], ["openai/gpt-oss-20b", "GPT-OSS 20B（速い）"], ["qwen/qwen3.8-27b", "Qwen3.8 27B"], ["llama-3.3-70b-versatile", "Llama 3.3 70B"]];
+const STT_MODELS = [["whisper-large-v3", "Whisper large-v3（正確）"], ["whisper-large-v3-turbo", "Whisper large-v3 turbo（速い）"]];
+let settings = {key: "", model: MODELS[0][0], stt: STT_MODELS[0][0], secret: false, tpl: "meeting", chunkSec: 30, theme: "auto", base: "https://api.groq.com/openai/v1"};
+function loadSettings() { try { const s = JSON.parse(localStorage.getItem(STORE_KEY)); if (s && typeof s === "object") settings = Object.assign(settings, s); } catch (e) {} }
+function saveSettings() { try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) {} applyTheme(); }
+function applyTheme() { if (settings.theme === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", settings.theme); }
+const aiOn = () => !!settings.key && !settings.secret;
+
+// ---------- 保存（IndexedDB。使えないブラウザではメモリだけ） ----------
+const DB = {
+  db: null, mem: null,
+  open() {
+    return new Promise(res => {
+      let r;
+      try { r = indexedDB.open("aigiji", 1); } catch (e) { this.mem = {records: new Map(), chunks: new Map(), daily: new Map()}; return res(); }
+      r.onupgradeneeded = () => {
+        const d = r.result;
+        d.createObjectStore("records", {keyPath: "id"});
+        d.createObjectStore("chunks", {keyPath: ["rec", "i"]}).createIndex("rec", "rec");
+        d.createObjectStore("daily", {keyPath: "date"});
+      };
+      r.onsuccess = () => { this.db = r.result; res(); };
+      r.onerror = () => { this.mem = {records: new Map(), chunks: new Map(), daily: new Map()}; res(); };
+    });
+  },
+  _key(store, v) { return store === "chunks" ? v.rec + "|" + v.i : store === "daily" ? v.date : v.id; },
+  _req(store, mode, fn) {
+    return new Promise((res, rej) => {
+      const t = this.db.transaction(store, mode), q = fn(t.objectStore(store));
+      t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+    });
+  },
+  put(store, v) { if (this.mem) { this.mem[store].set(this._key(store, v), structuredClone(v)); return Promise.resolve(); } return this._req(store, "readwrite", s => s.put(v)); },
+  get(store, k) { if (this.mem) return Promise.resolve(structuredClone(this.mem[store].get(Array.isArray(k) ? k.join("|") : k))); return this._req(store, "readonly", s => s.get(k)); },
+  del(store, k) { if (this.mem) { this.mem[store].delete(Array.isArray(k) ? k.join("|") : k); return Promise.resolve(); } return this._req(store, "readwrite", s => s.delete(k)); },
+  all(store) { if (this.mem) return Promise.resolve([...this.mem[store].values()].map(v => structuredClone(v))); return this._req(store, "readonly", s => s.getAll()); },
+  chunks(rec) {
+    if (this.mem) return Promise.resolve([...this.mem.chunks.values()].filter(c => c.rec === rec).sort((a, b) => a.i - b.i));
+    return this._req("chunks", "readonly", s => s.index("rec").getAll(rec)).then(a => a.sort((x, y) => x.i - y.i));
+  },
+  async delRecord(id) { for (const c of await this.chunks(id)) await this.del("chunks", [c.rec, c.i]); await this.del("records", id); },
+};
+
+// 記録はメモリにも持つ（画面はここから描く）。保存は save(rec)
+const recs = new Map();
+async function save(rec) { recs.set(rec.id, rec); await DB.put("records", rec); }
+const spkName = (rec, k) => (rec.names && rec.names[k]) || (k ? "Speaker " + k : "話者不明");
+const SPK_COLORS = ["#3949ab", "#c2410c", "#0f766e", "#a21caf", "#4d7c0f", "#b45309", "#0369a1", "#be123c"];
+const spkColor = k => SPK_COLORS[(parseInt(k, 10) - 1 + SPK_COLORS.length) % SPK_COLORS.length] || "#6b7280";
+const recText = rec => rec.segs.map(s => s.text).join("");
+
+// ---------- Groq（OpenAI互換API）。無料枠は1分あたりのトークン数に上限があるので、送る前に待つ ----------
+// 送る前は出力の上限まで使う見込みで数え、返事が来たら実際の使用量（usage）に置き換える
+const tpmLimit = () => settings.tpm || 7000;   // 無料枠 8,000/分 に余裕を持たせる（settings.tpm は検証用）
+const tokLog = [];
+const estTok = s => Math.ceil(String(s).length * 1.15) + 50;
+async function tpmWait(n) {
+  for (;;) {
+    const now = Date.now();
+    while (tokLog.length && now - tokLog[0][0] > 61000) tokLog.shift();
+    const used = tokLog.reduce((a, x) => a + x[1], 0);
+    if (used + n <= tpmLimit() || !tokLog.length) { const e = [now, n]; tokLog.push(e); return e; }
+    aiStatus.set(`AIの無料枠の待ち（約${Math.ceil((61000 - (now - tokLog[0][0])) / 1000)}秒）`);
+    await sleep(1000);
+  }
+}
+class AIError extends Error { constructor(msg, code) { super(msg); this.code = code; } }
+async function groqFetch(path, init, label) {
+  for (let tryN = 0; ; tryN++) {
+    let r;
+    try { r = await fetch(settings.base + path, Object.assign({}, init, {headers: Object.assign({Authorization: "Bearer " + settings.key}, init.headers || {})})); }
+    catch (e) { if (tryN >= 4) throw new AIError("通信できません（オフライン？）", "net"); await sleep(3000 * (tryN + 1)); continue; }
+    if (r.ok) return r.json();
+    const body = await r.text().catch(() => "");
+    if (r.status === 401) throw new AIError("AIキーが正しくありません（設定で確認）", "auth");
+    if (r.status === 429 || r.status >= 500) {
+      if (tryN >= 6) throw new AIError(`AIが混雑しています（${r.status}）。しばらくして「やり直す」を押してください`, "busy");
+      const m = /try again in ([\d.]+)(ms|s|m)/i.exec(body);
+      let wait = m ? parseFloat(m[1]) * (m[2] === "ms" ? 1 : m[2] === "m" ? 60000 : 1000) : (parseFloat(r.headers.get("retry-after")) || 5 * (tryN + 1)) * 1000;
+      if (/per day|RPD|TPD|ASD/i.test(body) && wait > 120000) throw new AIError("今日のAI無料枠を使い切りました。明日続きから処理できます", "quota");
+      aiStatus.set(`${label || "AI"}: 混雑のため${Math.ceil(wait / 1000)}秒待ちます`);
+      await sleep(Math.min(wait + 300, 120000)); continue;
+    }
+    throw new AIError(`AIのエラー ${r.status}: ${body.slice(0, 160)}`, "http");
+  }
+}
+// チャット。JSONで返させる
+async function chatJSON(system, user, maxOut, label) {
+  const slot = await tpmWait(estTok(system) + estTok(user) + maxOut);
+  const body = {model: settings.model, temperature: 0.2, max_completion_tokens: maxOut, response_format: {type: "json_object"},
+    messages: [{role: "system", content: system}, {role: "user", content: user}]};
+  if (/gpt-oss/.test(settings.model)) Object.assign(body, {reasoning_effort: "low", include_reasoning: false});
+  const j = await groqFetch("/chat/completions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}, label);
+  if (j.usage && j.usage.total_tokens) slot[1] = j.usage.total_tokens;
+  const txt = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "";
+  try { return JSON.parse(txt); } catch (e) {
+    const m = txt.match(/\{[\s\S]*\}/); if (m) try { return JSON.parse(m[0]); } catch (e2) {}
+    throw new AIError("AIの返事を読み取れませんでした。「やり直す」を押してください", "parse");
+  }
+}
+async function chatText(system, user, maxOut) {
+  const slot = await tpmWait(estTok(system) + estTok(user) + maxOut);
+  const body = {model: settings.model, temperature: 0.3, max_completion_tokens: maxOut, messages: [{role: "system", content: system}, {role: "user", content: user}]};
+  if (/gpt-oss/.test(settings.model)) Object.assign(body, {reasoning_effort: "low", include_reasoning: false});
+  const j = await groqFetch("/chat/completions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}, "AIに質問");
+  if (j.usage && j.usage.total_tokens) slot[1] = j.usage.total_tokens;
+  return ((j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "").trim();
+}
+// Whisperがよく作る «無音のときの決まり文句» は捨てる
+const HALLU = /^(ご視聴ありがとうございました|ご清聴ありがとうございました|チャンネル登録.*|最後までご視聴.*|おやすみなさい|字幕.*|[(（]?(音楽|拍手|笑い?|BGM)[)）]?|♪+|はい|ん)[。.!！\s]*$/;
+async function transcribe(blob, mime, prompt) {
+  const ext = /mp4|m4a|aac/.test(mime) ? "m4a" : /ogg/.test(mime) ? "ogg" : /wav/.test(mime) ? "wav" : "webm";
+  const fd = new FormData();
+  fd.append("file", blob, "chunk." + ext);
+  fd.append("model", settings.stt);
+  fd.append("language", "ja");
+  fd.append("response_format", "verbose_json");
+  fd.append("temperature", "0");
+  if (prompt) fd.append("prompt", prompt.slice(-120));
+  const j = await groqFetch("/audio/transcriptions", {method: "POST", body: fd}, "文字起こし");
+  const segs = (j.segments && j.segments.length ? j.segments : [{start: 0, text: j.text || "", no_speech_prob: 0, avg_logprob: 0}]);
+  return segs.map(s => ({start: s.start || 0, text: String(s.text || "").trim(), ns: s.no_speech_prob || 0, lp: s.avg_logprob || 0}))
+    .filter(s => s.text && !(s.ns > 0.8 && s.lp < -1) && !(HALLU.test(s.text) && (s.ns > 0.2 || s.lp < -0.6)));
+}
+
+// ---------- 処理の流れ（記録ごとに1本ずつ順に） ----------
+const SILENT = 0.012;     // 区切りの最大音量がこれ未満なら無音として送らない（無料枠の節約）
+const PIECE = 3300;       // 1回に送る発言の字数（番号込み）。指示文と出力を足しても無料枠の 8,000トークン/分 に収まる大きさ
+const MEMO_MAX = 3800;    // 要約に渡すメモの字数の上限。超えたらまとめ直す
+const SYS = "あなたは日本語の会議の議事録を作るアシスタントです。入力は音声認識の文字起こしなので、誤変換は文脈で直してよいが、話されていない事実や数字を足してはいけません。必ずJSONだけで答えます。";
+const Pipeline = {
+  running: new Map(),   // rec.id → Promise
+  kick(id) {
+    if (this.running.has(id)) { this.again = this.again || new Set(); this.again.add(id); return this.running.get(id); }
+    const p = this._run(id).catch(e => { const rec = recs.get(id); if (rec) { rec.err = e.message || String(e); rec.stage = ""; save(rec); } refresh(id); })
+      .finally(() => { this.running.delete(id); if (this.again && this.again.delete(id)) this.kick(id); });
+    this.running.set(id, p); return p;
+  },
+  async _run(id) {
+    const rec = recs.get(id); if (!rec) return;
+    rec.err = "";
+    if (aiOn()) {
+      // 1) まだの区切りを文字起こし
+      for (;;) {
+      const chunks = await DB.chunks(id);
+      const todo = chunks.filter(c => !c.done);
+      if (!todo.length) break;
+      let k = 0;
+      for (const c of todo) {
+        k++;
+        rec.stage = `文字起こし中 ${chunks.length - todo.length + k}/${chunks.length}${rec.state === "rec" ? "（録音中）" : ""}`; refresh(id);
+        if (c.peak >= SILENT) {
+          const prev = rec.segs.filter(s => s.t < c.t0).map(s => s.text).join("").slice(-120);
+          const out = await transcribe(c.blob, c.mime, prev);
+          rec.segs = rec.segs.filter(s => !(s.chunk === c.i)).concat(out.map(s => ({t: Math.min(c.t0 + s.start, c.t1), text: s.text, spk: "", chunk: c.i})));
+          rec.segs.sort((a, b) => a.t - b.t);
+        }
+        c.done = true; await DB.put("chunks", c); await save(rec); refresh(id);
+        await this.notes(rec, false);
+      }
+      }
+      // 2) 録音が終わっていれば、残りをメモ化して要約
+      if (rec.state === "proc") {
+        await this.notes(rec, true);
+        await this.summarize(rec);
+      }
+    } else if (rec.state === "proc") {
+      rec.stage = "要約中（端末内ルール）"; refresh(id);
+      ruleSummary(rec);
+    }
+    if (rec.state === "proc") rec.state = "done";
+    rec.stage = ""; await save(rec); refresh(id);
+  },
+  // 文字起こしを約3,000字ずつAIに渡し、話者の推定とメモ（決定・要点・課題・ToDo）を作る
+  async notes(rec, final) {
+    rec.notes = rec.notes || [];
+    for (;;) {
+      const from = rec.notes.length ? rec.notes[rec.notes.length - 1].to : 0;
+      let to = from, n = 0;
+      while (to < rec.segs.length && n + rec.segs[to].text.length + 6 <= PIECE) n += rec.segs[to++].text.length + 6;
+      if (to === from && from < rec.segs.length) n += rec.segs[to++].text.length;   // 1発言だけで上限を超えるときも進める
+      if (to === from || (!final && to === rec.segs.length)) return;   // 録音中は «上限まで溜まった分» だけ送る
+      rec.stage = `AIが内容を整理中（${rec.notes.length + 1}区切り目）`; refresh(rec.id);
+      const piece = rec.segs.slice(from, to);
+      const before = rec.segs.slice(Math.max(0, from - 6), from).map(s => `S${s.spk || "?"}: ${s.text}`).join("\n");
+      const prof = Object.entries(rec.profile || {}).map(([k, v]) => `S${k}: ${v}`).join("\n");
+      const user = [
+        prof && "これまでに推定した話者:\n" + prof,
+        before && "直前の発言（話者推定済み）:\n" + before,
+        "今回の発言（#番号 本文）:\n" + piece.map((s, i) => `#${i} ${s.text}`).join("\n"),
+        `次のJSONで答えてください。
+{"labels":[今回の発言それぞれの話者番号（1から。#0から順に${piece.length}個の整数）],
+ "speakers":{"話者番号":"その人の役割・特徴を短く（名前で呼ばれていれば名前も）"},
+ "names":{"話者番号":"名前（自己紹介や呼びかけで確実にわかる場合だけ。わからなければ入れない）"},
+ "topics":["話題"],"decisions":["決まったこと"],"points":["議論の要点・数字・条件"],"issues":["課題・懸念・未決事項"],
+ "todos":[{"who":"担当（不明なら空）","due":"期限（YYYY-MM-DDにできれば変換、無理なら原文、無ければ空）","what":"やること"}]}
+話者は声を聞けないので、話の流れ（質問と回答、呼びかけ、立場、話し方）から推定します。直前の発言と同じ人なら同じ番号を使います。
+録音日は ${R.iso(new Date(rec.created))}（${WDAY[new Date(rec.created).getDay()]}曜）。各項目は短い日本語の文で、該当が無ければ空配列。`,
+      ].filter(Boolean).join("\n\n");
+      const j = await chatJSON(SYS, user, 2000, "整理");
+      const labels = Array.isArray(j.labels) ? j.labels : [];
+      piece.forEach((s, i) => { const v = parseInt(labels[i], 10); if (!s.fixed) s.spk = v > 0 && v < 20 ? String(v) : (i ? piece[i - 1].spk : (rec.segs[from - 1] || {}).spk || "1"); });
+      rec.profile = Object.assign(rec.profile || {}, j.speakers || {});
+      rec.names = rec.names || {};
+      for (const [k, v] of Object.entries(j.names || {})) if (v && !rec.names[k] && String(v).length <= 12) rec.names[k] = String(v);
+      const pick = k => (Array.isArray(j[k]) ? j[k] : []).filter(Boolean);
+      rec.notes.push({from, to, topics: pick("topics"), decisions: pick("decisions"), points: pick("points"), issues: pick("issues"), todos: pick("todos")});
+      await save(rec); refresh(rec.id);
+    }
+  },
+  // メモ（＋短ければ全文）からテンプレートの見出しで要約
+  async summarize(rec) {
+    const tpl = R.TEMPLATES.find(t => t.id === rec.tpl) || R.TEMPLATES[0];
+    rec.stage = `「${tpl.name}」で要約中`; refresh(rec.id);
+    if (!rec.segs.length) { ruleSummary(rec); return; }
+    let notes = (rec.notes || []).map(n => ({topics: n.topics, decisions: n.decisions, points: n.points, issues: n.issues, todos: n.todos}));
+    // メモが長すぎるとき（2時間を超える会議など）は、まとめてから渡す
+    while (JSON.stringify(notes).length > MEMO_MAX && notes.length > 1) {
+      // 隣どうしを、1回に送れる大きさまで束ねてまとめる
+      const groups = [[]];
+      for (const n of notes) { const g = groups[groups.length - 1]; if (g.length && JSON.stringify(g.concat([n])).length > PIECE) groups.push([n]); else g.push(n); }
+      if (groups.length === notes.length) for (let i = 0; i + 1 < groups.length; i++) { groups[i].push(...groups[i + 1]); groups.splice(i + 1, 1); }   // 1つずつが大きいときも2つずつ束ねて必ず減らす
+      const merged = [];
+      for (const g of groups) {
+        if (g.length === 1) { merged.push(g[0]); continue; }
+        rec.stage = "長い記録をまとめ直し中"; refresh(rec.id);
+        // それでも1回に送れないほど大きいときは、いちばん長い一覧の後ろから削る
+        for (;;) {
+          if (JSON.stringify(g).length <= PIECE) break;
+          let best = null;
+          for (const n of g) for (const k of ["points", "topics", "issues", "decisions", "todos"]) if (Array.isArray(n[k]) && n[k].length && (!best || n[k].length > best.length)) best = n[k];
+          if (!best) break; best.pop();
+        }
+        const j = await chatJSON(SYS, "次のメモを、重複を除き短く1つにまとめ、同じ形式のJSON（topics, decisions, points, issues, todos）で返してください。\n" + JSON.stringify(g), 2000, "整理");
+        const pick = k => (Array.isArray(j[k]) ? j[k] : []).filter(Boolean);
+        merged.push({topics: pick("topics"), decisions: pick("decisions"), points: pick("points"), issues: pick("issues"), todos: pick("todos")});
+      }
+      notes = merged;
+    }
+    const people = [...new Set(rec.segs.map(s => s.spk).filter(Boolean))].map(k => `S${k}=${spkName(rec, k)}${rec.profile && rec.profile[k] ? "（" + rec.profile[k] + "）" : ""}`).join("、");
+    const full = recText(rec).length <= 2800 ? "\n\n文字起こし全文:\n" + rec.segs.map(s => `[${fmtTime(s.t)}] ${spkName(rec, s.spk)}: ${s.text}`).join("\n") : "";
+    const user = `テンプレート「${tpl.name}」で議事録の要約を作ってください。
+見出しは次の順に、すべて使います: ${tpl.sections.map(s => s[0]).join(" / ")}
+録音日: ${R.iso(new Date(rec.created))}（${WDAY[new Date(rec.created).getDay()]}曜）　長さ: ${fmtTime(rec.dur)}　話者: ${people || "不明"}
+次のJSONで答えてください。
+{"title":"内容がわかる20字以内の題名","sections":[{"heading":"見出し","items":["箇条書き1行ずつ。具体的に（数字・条件・固有名詞を残す）"]}],
+ "todos":[{"who":"担当（不明なら空）","due":"YYYY-MM-DD か 原文の期限表現 か 空","what":"やること"}],"keywords":["キーワード5〜8個"]}
+「概要」は2〜3文。該当が無い見出しは items を空にします。ToDoは重複をまとめます。
+
+区切りごとのメモ:
+${JSON.stringify(notes)}${full}`;
+    const j = await chatJSON(SYS, user, 3000, "要約");
+    const secs = Array.isArray(j.sections) ? j.sections : [];
+    rec.summary = {
+      tpl: tpl.id, by: "ai", at: Date.now(), title: String(j.title || ""),
+      sections: tpl.sections.map(([h]) => { const s = secs.find(x => x && x.heading === h) || {}; return {heading: h, items: (Array.isArray(s.items) ? s.items : s.items ? [s.items] : []).map(String)}; }),
+      keywords: (Array.isArray(j.keywords) ? j.keywords : []).map(String).slice(0, 10),
+    };
+    mergeTodos(rec, Array.isArray(j.todos) ? j.todos : []);
+    if (!rec.titleEdited && rec.summary.title) rec.title = rec.summary.title;
+  },
+};
+function ruleSummary(rec) {
+  const s = R.summarize(rec.segs, rec.tpl, new Date(rec.created), rec.names);
+  rec.summary = {tpl: rec.tpl, by: "rule", at: Date.now(), title: s.title, sections: s.sections, keywords: s.keywords};
+  mergeTodos(rec, s.todos);
+  if (!rec.titleEdited && s.title && /^録音 /.test(rec.title)) rec.title = s.title;
+}
+// AIが出したToDoで置き換える。手で足した・直したものと、完了済みのものは残す
+function mergeTodos(rec, list) {
+  const old = rec.todos || [];
+  const keep = old.filter(t => t.manual);
+  const out = list.filter(t => t && t.what).map(t => {
+    const what = String(t.what), prev = old.find(o => !o.manual && o.what === what);
+    return {id: prev ? prev.id : uid(), who: String(t.who || ""), due: String(t.due || ""), what, done: prev ? prev.done : false};
+  });
+  rec.todos = keep.concat(out);
+}
+
+// ---------- 録音 ----------
+const Recorder = {
+  active: false, paused: false, rec: null, stream: null, mime: "", cur: null, meta: null, acc: 0, since: 0, idx: 0,
+  saving: [], speech: null, interim: "", uttStart: null, wake: null, raf: 0, tick: 0, level: 0,
+  elapsed() { return this.acc + (this.paused || !this.since ? 0 : (performance.now() - this.since) / 1000); },
+  pickMime() {
+    if (typeof MediaRecorder === "undefined") return null;
+    return ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus", "audio/webm"].find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || "";
+  },
+  async start(tpl) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast("このブラウザではマイクを使えません（https か、このファイルを直接開いてください）"); return false; }
+    try { this.stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}}); }
+    catch (e) { toast("マイクの使用が許可されませんでした"); return false; }
+    this.mime = this.pickMime();
+    const now = Date.now();
+    this.rec = {id: uid(), title: "録音 " + fmtDay(now) + " " + fmtClock(now), created: now, dur: 0, tpl: tpl || settings.tpl,
+      segs: [], names: {}, profile: {}, notes: [], summary: null, todos: [], qa: [], state: "rec", engine: aiOn() ? "ai" : "local", stage: "", err: ""};
+    await save(this.rec);
+    this.active = true; this.paused = false; this.acc = 0; this.idx = 0; this.since = performance.now(); this.interim = "";
+    this.meter();
+    if (this.mime !== null) this.startChunk();
+    if (!aiOn()) this.startSpeech();
+    this.keepAwake();
+    this.tick = setInterval(() => this.onTick(), 500);
+    this.stream.getTracks().forEach(t => t.addEventListener("ended", () => { if (this.active && !this.paused) { toast("マイクが止まりました。録音を一時停止しました"); this.pause(); } }));
+    return true;
+  },
+  startChunk() {
+    let r;
+    try { r = new MediaRecorder(this.stream, this.mime ? {mimeType: this.mime} : undefined); } catch (e) { this.mime = null; return; }
+    const meta = {i: this.idx++, t0: this.elapsed(), t1: 0, peak: 0, parts: []};
+    r.ondataavailable = e => { if (e.data && e.data.size) meta.parts.push(e.data); };
+    r.onstop = () => { const p = this.onChunk(meta, r.mimeType || this.mime); this.saving.push(p); p.finally(() => { this.saving = this.saving.filter(x => x !== p); }); };
+    r.start(1000);
+    this.cur = r; this.meta = meta;
+  },
+  // 区切りを入れ替える: 新しい録音を先に始めてから古い方を止める（つなぎ目で声が欠けないように）
+  rotate() { const old = this.cur, m = this.meta; this.startChunk(); m.t1 = this.elapsed(); if (old && old.state !== "inactive") old.stop(); },
+  async onChunk(meta, mime) {
+    if (!meta.t1) meta.t1 = this.elapsed();
+    const blob = new Blob(meta.parts, {type: mime || "audio/webm"});
+    if (!blob.size) return;
+    const c = {rec: this.rec.id, i: meta.i, t0: meta.t0, t1: meta.t1, peak: meta.peak, mime: blob.type, blob, done: !aiOn() || meta.peak < SILENT};
+    await DB.put("chunks", c);
+    if (this.rec.id === c.rec && this.rec.dur < c.t1) { this.rec.dur = c.t1; await save(this.rec); }   // 途中で閉じても長さが残るように
+    if (aiOn()) Pipeline.kick(c.rec);
+  },
+  onTick() {
+    const e = this.elapsed();
+    if (this.cur && !this.paused && e - this.meta.t0 >= settings.chunkSec) this.rotate();
+    const clk = $("#rv-clock"); if (clk) clk.textContent = fmtTime(e);
+  },
+  meter() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const an = ctx.createAnalyser(); an.fftSize = 1024;
+      ctx.createMediaStreamSource(this.stream).connect(an);
+      const buf = new Float32Array(an.fftSize);
+      this.ctx = ctx;
+      const loop = () => {
+        if (!this.active) return;
+        an.getFloatTimeDomainData(buf);
+        let pk = 0; for (const v of buf) pk = Math.max(pk, Math.abs(v));
+        if (!this.paused && this.meta) this.meta.peak = Math.max(this.meta.peak, pk);
+        const bar = $("#rv-level"); if (bar) bar.style.width = Math.min(100, pk * 160) + "%";
+        this.raf = requestAnimationFrame(loop);
+      };
+      loop();
+    } catch (e) { if (this.meta) this.meta.peak = 1; }   // 音量が測れないときは全部送る
+  },
+  // AIキーが無いとき: ブラウザの音声認識（Chrome/Edge/Safari）
+  startSpeech() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { this.noSpeech = true; return; }
+    const sr = new SR();
+    sr.lang = "ja-JP"; sr.continuous = true; sr.interimResults = true;
+    sr.onresult = ev => {
+      let interim = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        if (this.uttStart == null) this.uttStart = this.elapsed();
+        if (r.isFinal) {
+          const text = r[0].transcript.trim();
+          if (text) { this.rec.segs.push({t: Math.max(0, this.uttStart - 1), text: /[。？！?!]$/.test(text) ? text : text + "。", spk: "1"}); save(this.rec); }
+          this.uttStart = null;
+        } else interim += r[0].transcript;
+      }
+      this.interim = interim; drawLive();
+    };
+    sr.onerror = e => { if (e.error === "not-allowed" || e.error === "service-not-allowed") { this.noSpeech = true; this.speech = null; drawLive(); } };
+    sr.onend = () => { if (this.active && !this.paused && this.speech === sr) try { sr.start(); } catch (e) {} };
+    try { sr.start(); this.speech = sr; } catch (e) { this.noSpeech = true; }
+  },
+  async keepAwake() { try { if ("wakeLock" in navigator) this.wake = await navigator.wakeLock.request("screen"); } catch (e) {} },
+  pause() {
+    if (!this.active || this.paused) return;
+    this.acc = this.elapsed(); this.paused = true;
+    if (this.cur && this.cur.state !== "inactive") { this.meta.t1 = this.acc; this.cur.stop(); }
+    this.cur = null;
+    if (this.speech) { const s = this.speech; this.speech = null; try { s.stop(); } catch (e) {} }
+    drawRecView();
+  },
+  resume() {
+    if (!this.active || !this.paused) return;
+    this.paused = false; this.since = performance.now();
+    if (this.stream.getTracks().some(t => t.readyState === "ended")) {
+      navigator.mediaDevices.getUserMedia({audio: true}).then(s => { this.stream = s; if (this.mime !== null) this.startChunk(); if (!aiOn()) this.startSpeech(); }).catch(() => toast("マイクを再開できませんでした"));
+    } else { if (this.mime !== null) this.startChunk(); if (!aiOn()) this.startSpeech(); }
+    drawRecView();
+  },
+  async stop() {
+    if (!this.active) return;
+    const rec = this.rec;
+    this.acc = this.elapsed(); this.paused = true;
+    clearInterval(this.tick); cancelAnimationFrame(this.raf);
+    if (this.speech) { const s = this.speech; this.speech = null; try { s.stop(); } catch (e) {} }
+    if (this.cur && this.cur.state !== "inactive") {
+      const r = this.cur; this.meta.t1 = this.acc;
+      await new Promise(res => { const prev = r.onstop; r.onstop = () => { prev && prev(); res(); }; r.stop(); });
+    }
+    await Promise.all(this.saving);   // 最後の区切りが保存されてから要約へ
+    this.cur = null; this.active = false;
+    this.stream.getTracks().forEach(t => t.stop());
+    try { this.ctx && this.ctx.close(); } catch (e) {}
+    try { this.wake && this.wake.release(); } catch (e) {}
+    if (this.interim) { rec.segs.push({t: this.acc, text: this.interim + "。", spk: "1"}); this.interim = ""; }
+    rec.dur = this.acc; rec.state = "proc";
+    await save(rec);
+    $("#overlay").innerHTML = "";
+    location.hash = "#/r/" + rec.id;
+    Pipeline.kick(rec.id);
+  },
+};
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Recorder.active && !Recorder.paused) Recorder.keepAwake(); });
+
+// ---------- 画面 ----------
+const aiStatus = {set(msg) { const el = $("#ai-wait"); if (el) el.textContent = msg; }};
+let toastTimer = 0;
+function toast(msg) {
+  let el = $(".toast"); if (!el) { el = document.createElement("div"); el.className = "toast"; el.setAttribute("role", "status"); document.body.appendChild(el); }
+  el.textContent = msg; clearTimeout(toastTimer); toastTimer = setTimeout(() => el.remove(), 3200);
+}
+function sheet(html, onMount) {
+  const ov = $("#overlay");
+  const bg = document.createElement("div"); bg.className = "sheet-bg";
+  bg.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
+  bg.addEventListener("click", e => { if (e.target === bg) bg.remove(); });
+  ov.appendChild(bg);
+  const close = () => bg.remove();
+  onMount && onMount(bg.firstChild, close);
+  const f = bg.querySelector("input,textarea,select"); f && f.focus();
+  return close;
+}
+const ICON_MIC = '<svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg>';
+const logo = `<div class="logo" aria-hidden="true">${ICON_MIC}</div>`;
+
+// 録音画面
+function openRecView() {
+  $("#overlay").innerHTML = `<div class="recview" id="recview"><div class="in">
+    <div class="row"><button class="back" id="rv-min" aria-label="閉じる（録音は続く）">&#x2039;</button><b id="rv-title" class="spacer"></b>
+      <select id="rv-tpl" aria-label="要約テンプレート">${R.TEMPLATES.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select></div>
+    <div class="clock" id="rv-clock">0:00</div>
+    <div class="state" id="rv-state"></div>
+    <div class="level"><i id="rv-level"></i></div>
+    <div class="live" id="rv-live" aria-live="polite"></div>
+    <div class="rec-ctl">
+      <button class="rbtn" id="rv-pause" aria-label="一時停止"></button>
+      <button class="rbtn stop" id="rv-stop" aria-label="録音を終えて要約"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+    </div>
+    <div class="rec-opts" id="rv-note"></div>
+  </div></div>`;
+  $("#rv-min").onclick = () => { $("#overlay").innerHTML = ""; render(); };
+  $("#rv-stop").onclick = () => Recorder.stop();
+  $("#rv-pause").onclick = () => Recorder.paused ? Recorder.resume() : Recorder.pause();
+  $("#rv-tpl").onchange = e => { Recorder.rec.tpl = e.target.value; save(Recorder.rec); };
+  drawRecView(); drawLive();
+}
+function drawRecView() {
+  if (!$("#recview") || !Recorder.rec) return;
+  $("#rv-title").textContent = Recorder.rec.title;
+  $("#rv-tpl").value = Recorder.rec.tpl;
+  $("#rv-state").innerHTML = Recorder.paused ? "一時停止中" : `<span class="dot"></span>録音中`;
+  $("#rv-pause").innerHTML = Recorder.paused ? '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>';
+  $("#rv-pause").setAttribute("aria-label", Recorder.paused ? "再開" : "一時停止");
+  const notes = [];
+  if (Recorder.rec.engine === "ai") notes.push(`AIが${settings.chunkSec}秒ごとに文字起こしします（Groqへ送信）`);
+  else notes.push(settings.secret ? "社外秘モード: ブラウザの音声認識で文字起こしし、要約は端末内で行います" : "AIキー未設定: ブラウザの音声認識で文字起こしします");
+  if (Recorder.noSpeech && Recorder.rec.engine !== "ai") notes.push("このブラウザは音声認識に対応していません。録音だけ保存します（後でAIキーを入れれば文字起こしできます）");
+  if (/iPhone|iPad/.test(navigator.userAgent)) notes.push("iPhoneは画面をロックしたり他のアプリに切り替えると録音が止まります");
+  $("#rv-note").innerHTML = notes.map(n => `<div>${esc(n)}</div>`).join("");
+}
+function drawLive() {
+  const el = $("#rv-live"); if (!el || !Recorder.rec) return;
+  const rec = Recorder.rec;
+  const segs = rec.segs.slice(-60);
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  el.innerHTML = (segs.length ? segs.map(s => `<p><span class="muted small num">${fmtTime(s.t)}</span> ${esc(s.text)}</p>`).join("") : "")
+    + (Recorder.interim ? `<p class="interim">${esc(Recorder.interim)}</p>` : "")
+    + (!segs.length && !Recorder.interim ? `<p class="muted">${rec.engine === "ai" ? `話した内容は約${settings.chunkSec}秒ごとにここへ出ます` : "話すとここに文字が出ます"}</p>` : "")
+    + (rec.stage ? `<p class="muted small">${esc(rec.stage)}</p>` : "");
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+// ルーター: #/ 記録一覧, #/r/<id>/<tab>, #/todo, #/daily/<日付>, #/settings, #/ask
+function route() { const h = location.hash.replace(/^#\/?/, "").split("/"); return {view: h[0] || "home", a: h[1] ? decodeURIComponent(h[1]) : "", b: h[2] || ""}; }
+let searchQ = "", todoFilter = "open";
+function render() {
+  const r = route();
+  $$("#nav button[data-go]").forEach(b => b.classList.toggle("on", b.dataset.go === (r.view === "r" || r.view === "ask" ? "home" : r.view)));
+  const fab = $("#fab"); fab.classList.toggle("on", Recorder.active); fab.setAttribute("aria-label", Recorder.active ? "録音画面に戻る" : "録音を始める");
+  const m = $("#main");
+  if (r.view === "r") return viewRecord(m, r.a, r.b || "sum");
+  if (r.view === "todo") return viewTodo(m);
+  if (r.view === "daily") return viewDaily(m, r.a);
+  if (r.view === "settings") return viewSettings(m);
+  if (r.view === "ask") return viewAskAll(m);
+  return viewHome(m);
+}
+// 処理の進み具合で画面を描き直す（入力中・ダイアログ表示中は邪魔しない）
+function refresh(id) {
+  if (Recorder.active && Recorder.rec && Recorder.rec.id === id) drawLive();
+  const r = route();
+  const editing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && $("#main").contains(document.activeElement);
+  if ($(".sheet-bg") || editing) return;
+  if ((r.view === "r" && r.a === id) || r.view === "home") render();
+}
+
+function recCard(rec) {
+  const open = (rec.todos || []).filter(t => !t.done).length;
+  const first = rec.summary && rec.summary.sections[0] && rec.summary.sections[0].items.join(" ") || recText(rec).slice(0, 90);
+  const st = rec.state === "rec" ? '<span class="chip rec">録音中</span>' : rec.stage ? '<span class="chip">処理中</span>' : rec.err ? '<span class="chip warn">要確認</span>' : "";
+  return `<button class="rec-item" data-rec="${esc(rec.id)}"><div class="t">${esc(rec.title)}</div>
+    <div class="m"><span class="num">${fmtClock(rec.created)}</span><span class="num">${fmtTime(rec.dur)}</span>${open ? `<span>ToDo ${open}</span>` : ""}${st}</div>
+    ${first ? `<div class="p">${esc(first)}</div>` : ""}</button>`;
+}
+function viewHome(m) {
+  const list = [...recs.values()].sort((a, b) => b.created - a.created);
+  const q = searchQ.trim();
+  const hit = q ? list.filter(r => (r.title + recText(r) + JSON.stringify(r.summary || "")).includes(q)) : list;
+  let html = `<div class="top">${logo}<h1 class="spacer">AI議事録</h1>${list.length ? '<a class="btn sm" href="#/ask">記録に質問</a>' : ""}</div>`;
+  if (!aiOn()) html += `<div class="note">${settings.secret ? "社外秘モード: 文字起こしはブラウザの音声認識、要約は端末内のルールで行います。" : "AIキーが未設定です。<a href=\"#/settings\">設定</a>で無料のGroqキーを入れると、文字起こしと要約が高精度になります。今のままでも端末内で動きます。"}</div>`;
+  if (list.length) html += `<input type="search" class="search" id="q" placeholder="記録を検索" value="${esc(searchQ)}" aria-label="記録を検索">`;
+  if (!list.length) html += `<div class="empty"><p style="font-size:1.1rem;color:var(--fg)">まだ記録がありません</p><p>下の赤いマイクを押すと録音が始まります。<br>止めるとAIが要約・ToDo・話者分けをします。</p></div>`;
+  let day = "";
+  for (const rec of hit) {
+    const d = fmtDay(rec.created);
+    if (d !== day) { html += `<div class="day">${d}</div>`; day = d; }
+    html += recCard(rec);
+  }
+  if (q && !hit.length) html += `<p class="muted">「${esc(q)}」を含む記録はありません</p>`;
+  m.innerHTML = html;
+  const qi = $("#q"); if (qi) qi.oninput = e => { searchQ = e.target.value; const pos = e.target.selectionStart; viewHome(m); const n = $("#q"); n.focus(); n.setSelectionRange(pos, pos); };
+  $$(".rec-item", m).forEach(b => b.onclick = () => { location.hash = "#/r/" + b.dataset.rec; });
+}
+
+// 記録の詳細
+const TABS = [["sum", "要約"], ["txt", "文字起こし"], ["todo", "ToDo"], ["ask", "AIに質問"]];
+function viewRecord(m, id, tab) {
+  const rec = recs.get(id);
+  if (!rec) { m.innerHTML = `<div class="empty">記録が見つかりません。<br><a href="#/">一覧へ</a></div>`; return; }
+  const busy = Pipeline.running.has(id) || rec.state === "rec";
+  let html = `<div class="row no-print"><a class="back" href="#/" aria-label="一覧へ">&#x2039;</a><span class="spacer"></span>
+    <button class="btn sm" id="r-export">書き出し</button><button class="btn sm" id="r-more" aria-label="その他">…</button></div>
+    <input class="title-in" id="r-title" value="${esc(rec.title)}" aria-label="題名">
+    <div class="muted small">${fmtDay(rec.created)} ${fmtClock(rec.created)}・<span class="num">${fmtTime(rec.dur)}</span>・${rec.engine === "ai" ? "AI文字起こし" : "端末内の音声認識"}</div>`;
+  if (rec.state === "rec") html += `<div class="busy"><span class="spin"></span>録音中です。<button class="btn sm" id="r-torec">録音画面へ</button></div>`;
+  if (rec.stage) html += `<div class="busy"><span class="spin"></span><span>${esc(rec.stage)}</span><span id="ai-wait" class="small"></span></div>`;
+  if (rec.err) html += `<div class="note">${esc(rec.err)} <button class="btn sm" id="r-retry">やり直す</button></div>`;
+  html += `<div class="tabs" role="tablist">${TABS.map(([k, n]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? "on" : ""}" data-tab="${k}">${n}${k === "todo" && rec.todos.length ? ` <span class="num">${rec.todos.filter(t => !t.done).length}</span>` : ""}</button>`).join("")}</div><div id="tab"></div>`;
+  m.innerHTML = html;
+  const t = $("#r-title");
+  t.onchange = () => { rec.title = t.value.trim() || rec.title; rec.titleEdited = true; save(rec); };
+  $$(".tabs button", m).forEach(b => b.onclick = () => { location.hash = `#/r/${id}/${b.dataset.tab}`; });
+  if ($("#r-torec")) $("#r-torec").onclick = openRecView;
+  if ($("#r-retry")) $("#r-retry").onclick = () => { rec.err = ""; if (rec.state === "done") rec.state = "proc"; Pipeline.kick(id); render(); };
+  $("#r-export").onclick = () => exportSheet(rec);
+  $("#r-more").onclick = () => moreSheet(rec);
+  const el = $("#tab");
+  if (tab === "txt") tabTranscript(el, rec);
+  else if (tab === "todo") tabTodo(el, rec);
+  else if (tab === "ask") tabAsk(el, rec);
+  else tabSummary(el, rec, busy);
+}
+function tabSummary(el, rec, busy) {
+  const s = rec.summary;
+  let html = `<div class="tpl-pick" role="group" aria-label="テンプレート">${R.TEMPLATES.map(t => `<button data-tpl="${t.id}" class="${t.id === rec.tpl ? "on" : ""}" title="${esc(t.desc)}" ${busy ? "disabled" : ""}>${esc(t.name)}</button>`).join("")}</div>`;
+  if (!s) html += busy ? `<p class="muted">録音を止めると要約が出ます。</p>` : `<p class="muted">要約はまだありません。</p><button class="btn primary" id="s-make">要約する</button>`;
+  else {
+    if (s.by === "rule") html += `<div class="note">端末内のルールで作った要約です（言い回しから拾っただけなので、AIより粗いです）。${aiOn() && rec.segs.length ? '<button class="btn sm" id="s-ai">AIで要約し直す</button>' : ""}</div>`;
+    if (s.tpl !== rec.tpl && !busy) html += `<div class="note">テンプレートを変えました。<button class="btn sm primary" id="s-make">「${esc((R.TEMPLATES.find(t => t.id === rec.tpl) || {}).name)}」で作り直す</button></div>`;
+    html += `<div class="card">` + s.sections.map(sec => `<div class="sec"><h3>${esc(sec.heading)}</h3>${sec.items.length ? `<ul>${sec.items.map(i => `<li>${esc(i)}</li>`).join("")}</ul>` : '<p class="muted small" style="margin:0">（該当なし）</p>'}</div>`).join("")
+      + (s.keywords && s.keywords.length ? `<div class="kw">${s.keywords.map(k => `<span class="chip">${esc(k)}</span>`).join("")}</div>` : "") + `</div>`;
+  }
+  el.innerHTML = html;
+  $$(".tpl-pick button", el).forEach(b => b.onclick = () => { rec.tpl = b.dataset.tpl; save(rec); render(); });
+  const mk = $("#s-make", el) || $("#s-ai", el);
+  if (mk) mk.onclick = () => resummarize(rec);
+  if ($("#s-ai", el)) $("#s-ai", el).onclick = () => resummarize(rec);
+}
+async function resummarize(rec) {
+  if (rec.state === "rec") return;
+  rec.state = "proc"; rec.err = ""; await save(rec); render();
+  Pipeline.kick(rec.id);
+}
+// 文字起こし
+const Player = {
+  audio: null, rec: null, chunks: [], ci: -1,
+  async play(rec, t) {
+    if (!this.audio) { this.audio = new Audio(); this.audio.ontimeupdate = () => this.mark(); this.audio.onended = () => this.next(); }
+    if (this.rec !== rec) { this.rec = rec; this.chunks = (await DB.chunks(rec.id)).filter(c => c.blob && c.blob.size); }
+    if (!this.chunks.length) { toast("音声が保存されていません"); return; }
+    let i = this.chunks.findIndex(c => t >= c.t0 && t < c.t1); if (i < 0) i = this.chunks.findIndex(c => c.t0 >= t); if (i < 0) i = 0;
+    this.load(i, Math.max(0, t - this.chunks[i].t0));
+  },
+  load(i, off) {
+    this.ci = i; const a = this.audio;
+    if (a.src) URL.revokeObjectURL(a.src);
+    a.src = URL.createObjectURL(this.chunks[i].blob);
+    a.onloadedmetadata = () => { try { if (off > 0.3) a.currentTime = off; } catch (e) {} };
+    a.play().catch(() => {}); this.ui();
+  },
+  next() { if (this.ci + 1 < this.chunks.length) this.load(this.ci + 1, 0); else { this.ci = -1; this.ui(); } },
+  toggle() { if (!this.audio) return; if (this.audio.paused) this.audio.play(); else this.audio.pause(); this.ui(); },
+  now() { return this.ci < 0 ? -1 : this.chunks[this.ci].t0 + (this.audio.currentTime || 0); },
+  mark() {
+    const t = this.now(); const tt = $("#pl-time"); if (tt) tt.textContent = t < 0 ? "" : fmtTime(t);
+    let cur = null; $$(".seg[data-t]").forEach(el => { if (+el.dataset.t <= t + 0.2) cur = el; el.classList.remove("playing"); });
+    if (cur) cur.classList.add("playing");
+  },
+  ui() { const b = $("#pl-btn"); if (b) b.textContent = this.audio && !this.audio.paused && this.ci >= 0 ? "一時停止" : "再生"; },
+};
+function tabTranscript(el, rec) {
+  if (!rec.segs.length) { el.innerHTML = `<p class="muted">${rec.state === "rec" || Pipeline.running.has(rec.id) ? "文字起こしを待っています…" : "文字起こしはありません。"}</p>` + retransBtn(rec); bindRetrans(el, rec); return; }
+  const ks = [...new Set(rec.segs.map(s => s.spk).filter(Boolean))].sort((a, b) => a - b);
+  let html = `<div class="player"><button class="btn sm" id="pl-btn">再生</button><span id="pl-time" class="num small muted"></span><span class="spacer"></span><button class="btn sm" id="t-copy">コピー</button></div>`;
+  if (ks.length) html += `<div class="spk-legend small"><span class="muted">話者（タップで名前を変更）:</span>${ks.map(k => `<button class="spk" data-rename="${k}" style="background:${spkColor(k)}22;color:${spkColor(k)}">${esc(spkName(rec, k))}</button>`).join("")}</div>`;
+  if (rec.engine === "ai" && ks.length) html += `<p class="small muted" style="margin:0 0 6px">話者はAIが話の流れから推定したものです。違うときは発言の話者をタップして直せます。</p>`;
+  html += rec.segs.map((s, i) => `<div class="seg" data-t="${s.t}"><button class="tm" data-play="${s.t}" aria-label="${fmtTime(s.t)}から再生">${fmtTime(s.t)}</button>
+    ${s.spk ? `<button class="spk" data-seg="${i}" style="background:${spkColor(s.spk)}22;color:${spkColor(s.spk)}">${esc(spkName(rec, s.spk))}</button>` : `<button class="spk muted" data-seg="${i}">話者？</button>`}
+    <div class="tx" data-edit="${i}">${esc(s.text)}</div></div>`).join("");
+  html += retransBtn(rec);
+  el.innerHTML = html;
+  $("#pl-btn").onclick = () => { if (Player.rec === rec && Player.ci >= 0) Player.toggle(); else Player.play(rec, 0); };
+  $("#t-copy").onclick = () => copy(transcriptText(rec));
+  $$("[data-play]", el).forEach(b => b.onclick = () => Player.play(rec, +b.dataset.play));
+  $$("[data-rename]", el).forEach(b => b.onclick = () => renameSpeaker(rec, b.dataset.rename));
+  $$("[data-seg]", el).forEach(b => b.onclick = () => pickSpeaker(rec, +b.dataset.seg));
+  $$("[data-edit]", el).forEach(b => b.ondblclick = () => editSeg(rec, +b.dataset.edit));
+  bindRetrans(el, rec);
+  Player.mark();
+}
+function retransBtn(rec) { return aiOn() && rec.engine !== "ai" && rec.state !== "rec" ? `<p><button class="btn sm" id="t-retrans">保存した音声をAIで文字起こしし直す</button></p>` : ""; }
+function bindRetrans(el, rec) {
+  const b = $("#t-retrans", el); if (!b) return;
+  b.onclick = async () => {
+    const cs = await DB.chunks(rec.id);
+    if (!cs.length) { toast("音声が保存されていないため、文字起こしし直せません"); return; }
+    if (!confirm("今の文字起こしを、AIの文字起こしで置き換えます。よろしいですか？")) return;
+    for (const c of cs) { c.done = false; await DB.put("chunks", c); }
+    rec.segs = []; rec.notes = []; rec.engine = "ai"; rec.state = "proc"; rec.summary = null; await save(rec); render(); Pipeline.kick(rec.id);
+  };
+}
+function renameSpeaker(rec, k) {
+  sheet(`<h3>話者の名前</h3><p class="small muted">${esc(spkName(rec, k))}${rec.profile && rec.profile[k] ? "（AIの推定: " + esc(rec.profile[k]) + "）" : ""} の発言すべてに付きます。</p>
+    <input id="sp-name" value="${esc(rec.names[k] || "")}" placeholder="例: 平木" style="width:100%"><div class="row" style="margin-top:12px"><span class="spacer"></span><button class="btn" data-x>やめる</button><button class="btn primary" data-ok>決定</button></div>`,
+  (s, close) => {
+    $("[data-x]", s).onclick = close;
+    const ok = () => { const v = $("#sp-name", s).value.trim(); if (v) rec.names[k] = v; else delete rec.names[k]; save(rec); close(); render(); };
+    $("[data-ok]", s).onclick = ok; $("#sp-name", s).onkeydown = e => { if (e.key === "Enter" && !e.isComposing) ok(); };
+  });
+}
+function pickSpeaker(rec, i) {
+  const seg = rec.segs[i];
+  const ks = [...new Set(rec.segs.map(s => s.spk).filter(Boolean))].sort((a, b) => a - b);
+  const nk = String((ks.length ? Math.max(...ks.map(Number)) : 0) + 1);
+  sheet(`<h3>この発言の話者</h3><p class="small">${esc(seg.text.slice(0, 80))}</p>
+    <div class="row">${ks.concat([nk]).map(k => `<button class="btn ${k === seg.spk ? "primary" : ""}" data-k="${k}">${k === nk ? "新しい話者（" + esc(spkName(rec, k)) + "）" : esc(spkName(rec, k))}</button>`).join("")}</div>
+    <label class="switch small" style="margin-top:12px"><input type="checkbox" id="sp-follow"><span>このあと続く同じ話者の発言もまとめて変える</span></label>
+    <div class="row" style="margin-top:10px"><button class="btn sm" data-edit>文章を直す</button><span class="spacer"></span><button class="btn" data-x>閉じる</button></div>`,
+  (s, close) => {
+    $("[data-x]", s).onclick = close;
+    $("[data-edit]", s).onclick = () => { close(); editSeg(rec, i); };
+    $$("[data-k]", s).forEach(b => b.onclick = () => {
+      const from = seg.spk, to = b.dataset.k, follow = $("#sp-follow", s).checked;
+      for (let j = i; j < rec.segs.length; j++) { if (j > i && (!follow || rec.segs[j].spk !== from)) break; rec.segs[j].spk = to; rec.segs[j].fixed = true; }
+      save(rec); close(); render();
+    });
+  });
+}
+function editSeg(rec, i) {
+  sheet(`<h3>文章を直す <span class="small muted num">${fmtTime(rec.segs[i].t)}</span></h3><textarea id="sg-t" rows="5">${esc(rec.segs[i].text)}</textarea>
+    <div class="row" style="margin-top:10px"><button class="btn sm danger" data-del>この発言を消す</button><span class="spacer"></span><button class="btn" data-x>やめる</button><button class="btn primary" data-ok>保存</button></div>`,
+  (s, close) => {
+    $("[data-x]", s).onclick = close;
+    $("[data-ok]", s).onclick = () => { rec.segs[i].text = $("#sg-t", s).value.trim(); if (!rec.segs[i].text) rec.segs.splice(i, 1); save(rec); close(); render(); };
+    $("[data-del]", s).onclick = () => { rec.segs.splice(i, 1); save(rec); close(); render(); };
+  });
+}
+// ToDo（記録ごと）
+function todoRow(t, rec, showRec) {
+  return `<div class="todo ${t.done ? "done" : ""}"><input type="checkbox" data-done="${esc(t.id)}" data-rec="${esc(rec.id)}" ${t.done ? "checked" : ""} aria-label="完了">
+    <div class="what">${esc(t.what)}</div><button class="edit" data-tedit="${esc(t.id)}" data-rec="${esc(rec.id)}">編集</button>
+    <div class="meta">${t.who ? `<span>担当: ${esc(t.who)}</span>` : ""}${t.due ? `<span class="${!t.done && isLate(t.due) ? "late" : ""}">期限: ${esc(fmtDue(t.due))}</span>` : ""}${showRec ? `<a href="#/r/${esc(rec.id)}/todo">${esc(rec.title)}</a>` : ""}</div></div>`;
+}
+function bindTodos(el) {
+  $$("[data-done]", el).forEach(c => c.onchange = () => { const rec = recs.get(c.dataset.rec), t = rec.todos.find(x => x.id === c.dataset.done); t.done = c.checked; save(rec); render(); });
+  $$("[data-tedit]", el).forEach(b => b.onclick = () => editTodo(recs.get(b.dataset.rec), b.dataset.tedit));
+}
+function tabTodo(el, rec) {
+  const list = rec.todos.slice().sort((a, b) => a.done - b.done);
+  el.innerHTML = (list.length ? list.map(t => todoRow(t, rec)).join("") : `<p class="muted">${rec.summary ? "ToDoは見つかりませんでした。" : "要約と一緒にToDoが出ます。"}</p>`)
+    + `<p><button class="btn sm" id="td-add">＋ ToDoを足す</button></p>`;
+  bindTodos(el);
+  $("#td-add", el).onclick = () => editTodo(rec, null);
+}
+function editTodo(rec, id) {
+  const t = id ? rec.todos.find(x => x.id === id) : {who: "", due: "", what: ""};
+  const dueIso = /^\d{4}-\d\d-\d\d$/.test(t.due) ? t.due : "";
+  sheet(`<h3>${id ? "ToDoを編集" : "ToDoを足す"}</h3>
+    <div class="field"><label for="te-what">やること</label><textarea id="te-what" rows="3">${esc(t.what)}</textarea></div>
+    <div class="row"><div class="field spacer"><label for="te-who">担当</label><input id="te-who" value="${esc(t.who)}" style="width:100%"></div>
+    <div class="field"><label for="te-due">期限</label><input type="date" id="te-due" value="${esc(dueIso)}"></div></div>
+    ${t.due && !dueIso ? `<p class="small muted">元の期限の表現: ${esc(t.due)}</p>` : ""}
+    <div class="row">${id ? '<button class="btn sm danger" data-del>削除</button>' : ""}<span class="spacer"></span><button class="btn" data-x>やめる</button><button class="btn primary" data-ok>保存</button></div>`,
+  (s, close) => {
+    $("[data-x]", s).onclick = close;
+    $("[data-ok]", s).onclick = () => {
+      const what = $("#te-what", s).value.trim(); if (!what) return;
+      const due = $("#te-due", s).value || (dueIso ? "" : t.due);
+      if (id) Object.assign(t, {what, who: $("#te-who", s).value.trim(), due, manual: true});
+      else rec.todos.push({id: uid(), what, who: $("#te-who", s).value.trim(), due, done: false, manual: true});
+      save(rec); close(); render();
+    };
+    const d = $("[data-del]", s); if (d) d.onclick = () => { rec.todos = rec.todos.filter(x => x.id !== id); save(rec); close(); render(); };
+  });
+}
+// AIに質問（記録ごと）
+function contextOf(rec, q, max) {
+  const lines = rec.segs.map(s => `[${fmtTime(s.t)}] ${spkName(rec, s.spk)}: ${s.text}`);
+  if (lines.join("\n").length <= max) return "文字起こし全文:\n" + lines.join("\n");
+  const sum = rec.summary ? rec.summary.sections.map(s => s.heading + ": " + s.items.join(" / ")).join("\n") : "";
+  const hits = R.search(rec.segs, q, 40).map(s => `[${fmtTime(s.t)}] ${spkName(rec, s.spk)}: ${s.text}`);
+  let ctx = "要約:\n" + sum + "\n\n関係しそうな発言:\n";
+  for (const h of hits) { if ((ctx + h).length > max) break; ctx += h + "\n"; }
+  return ctx;
+}
+const ASK_SYS = "あなたは会議の記録について答えるアシスタントです。与えられた記録だけを根拠に、日本語で簡潔に答えます。記録に無いことは「記録には出てきません」と答えます。根拠になった発言の時刻 [mm:ss] を添えます。";
+function tabAsk(el, rec) {
+  const qa = rec.qa || [];
+  el.innerHTML = `${aiOn() ? "" : `<div class="note">AIキーが無い（または社外秘モード）ので、質問の言葉を含む発言を探して出します。</div>`}
+    ${qa.map(x => `<div class="qa"><div class="q">Q. ${esc(x.q)}</div><div class="a">${esc(x.a)}</div></div>`).join("") || `<p class="muted">例: 「決まった納期は？」「田中さんの宿題は？」「予算の話はどうなった？」</p>`}
+    <div class="ask"><textarea id="ask-q" placeholder="この記録について質問" rows="2"></textarea><button class="btn primary" id="ask-go">送信</button></div><div id="ask-busy"></div>`;
+  $("#ask-go", el).onclick = async () => {
+    const q = $("#ask-q", el).value.trim(); if (!q) return;
+    $("#ask-go", el).disabled = true; $("#ask-busy", el).innerHTML = `<div class="busy"><span class="spin"></span>考え中… <span id="ai-wait"></span></div>`;
+    let a;
+    try {
+      if (aiOn()) a = await chatText(ASK_SYS, `記録「${rec.title}」（${fmtDay(rec.created)}）\n${contextOf(rec, q, 4000)}\n\n質問: ${q}`, 1200);
+      else { const h = R.search(rec.segs, q, 6); a = h.length ? "関係しそうな発言:\n" + h.map(s => `[${fmtTime(s.t)}] ${spkName(rec, s.spk)}: ${s.text}`).join("\n") : "その言葉を含む発言は見つかりませんでした。"; }
+    } catch (e) { a = "エラー: " + e.message; }
+    rec.qa = (rec.qa || []).concat([{q, a, at: Date.now()}]); await save(rec); render();
+  };
+  $("#ask-q", el).onkeydown = e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("#ask-go", el).click(); };
+}
+// すべての記録に質問
+let askAllLog = [];
+function viewAskAll(m) {
+  m.innerHTML = `<div class="row"><a class="back" href="#/" aria-label="一覧へ">&#x2039;</a><h1>記録に質問</h1></div>
+    <p class="small muted">これまでの記録全体から答えます（新しい順に要約を読み、関係しそうな発言を探して渡します）。</p>
+    ${askAllLog.map(x => `<div class="qa"><div class="q">Q. ${esc(x.q)}</div><div class="a">${esc(x.a)}</div></div>`).join("")}
+    <div class="ask"><textarea id="aa-q" placeholder="例: 先月決まった搬送速度は？" rows="2"></textarea><button class="btn primary" id="aa-go">送信</button></div><div id="aa-busy"></div>`;
+  $("#aa-go").onclick = async () => {
+    const q = $("#aa-q").value.trim(); if (!q) return;
+    $("#aa-go").disabled = true; $("#aa-busy").innerHTML = `<div class="busy"><span class="spin"></span>考え中… <span id="ai-wait"></span></div>`;
+    const list = [...recs.values()].sort((a, b) => b.created - a.created);
+    let a;
+    try {
+      if (aiOn()) {
+        let ctx = "";
+        const hits = list.flatMap(r => R.search(r.segs, q, 4).map(s => `${fmtDay(r.created)}「${r.title}」[${fmtTime(s.t)}] ${s.text}`)).slice(0, 25);
+        ctx += "関係しそうな発言:\n" + hits.join("\n").slice(0, 2000) + "\n\n記録の要約（新しい順）:\n";
+        for (const r of list) {
+          const s = `■${fmtDay(r.created)}「${r.title}」 ` + (r.summary ? r.summary.sections.map(x => x.heading + ": " + x.items.join(" / ")).join(" ｜ ") : recText(r).slice(0, 200)) + "\n";
+          if ((ctx + s).length > 4000) break; ctx += s;
+        }
+        a = await chatText(ASK_SYS.replace("時刻 [mm:ss]", "日付と記録名"), ctx + "\n質問: " + q, 1200);
+      } else {
+        const hits = list.flatMap(r => R.search(r.segs, q, 3).map(s => `${fmtDay(r.created)}「${r.title}」[${fmtTime(s.t)}] ${s.text}`)).slice(0, 12);
+        a = hits.length ? "関係しそうな発言:\n" + hits.join("\n") : "その言葉を含む発言は見つかりませんでした。";
+      }
+    } catch (e) { a = "エラー: " + e.message; }
+    askAllLog.push({q, a}); render();
+  };
+}
+// ToDo（全記録）
+function viewTodo(m) {
+  const items = [];
+  for (const rec of recs.values()) for (const t of rec.todos || []) items.push({t, rec});
+  const shown = items.filter(x => todoFilter === "all" || (todoFilter === "open" ? !x.t.done : x.t.done))
+    .sort((a, b) => (a.t.done - b.t.done) || ((/^\d{4}/.test(a.t.due) ? a.t.due : "9") < (/^\d{4}/.test(b.t.due) ? b.t.due : "9") ? -1 : 1) || b.rec.created - a.rec.created);
+  const open = items.filter(x => !x.t.done).length;
+  m.innerHTML = `<div class="top">${logo}<h1 class="spacer">ToDo</h1><span class="muted small">未完了 <b class="num">${open}</b></span></div>
+    <div class="tpl-pick">${[["open", "未完了"], ["done", "完了"], ["all", "すべて"]].map(([k, n]) => `<button data-f="${k}" class="${k === todoFilter ? "on" : ""}">${n}</button>`).join("")}</div>
+    ${shown.map(x => todoRow(x.t, x.rec, true)).join("") || `<div class="empty">${items.length ? "該当するToDoはありません" : "録音を要約すると、誰が・いつまでに・何をするかがここに集まります"}</div>`}`;
+  $$("[data-f]", m).forEach(b => b.onclick = () => { todoFilter = b.dataset.f; render(); });
+  bindTodos(m);
+}
+// 毎日の振り返り
+async function viewDaily(m, date) {
+  const days = [...new Set([...recs.values()].map(r => dayKey(r.created)))].sort().reverse();
+  date = date || days[0] || dayKey(Date.now());
+  const list = [...recs.values()].filter(r => dayKey(r.created) === date).sort((a, b) => a.created - b.created);
+  const rep = await DB.get("daily", date);
+  const d = new Date(date + "T00:00");
+  let html = `<div class="top">${logo}<h1 class="spacer">毎日の振り返り</h1></div>
+    <div class="row"><select id="dl-day" aria-label="日付">${(days.includes(date) ? days : [date].concat(days)).map(k => `<option value="${k}" ${k === date ? "selected" : ""}>${fmtDay(new Date(k + "T00:00").getTime())}</option>`).join("")}</select>
+    <span class="muted small">${list.length}件・<span class="num">${fmtTime(list.reduce((a, r) => a + r.dur, 0))}</span></span></div>`;
+  if (!list.length) html += `<div class="empty">この日の記録はありません</div>`;
+  else {
+    html += rep ? `<div class="card" style="margin-top:12px">${rep.sections.map(sec => `<div class="sec"><h3>${esc(sec.heading)}</h3>${sec.items.length ? `<ul>${sec.items.map(i => `<li>${esc(i)}</li>`).join("")}</ul>` : '<p class="muted small" style="margin:0">（なし）</p>'}</div>`).join("")}
+      <p class="small muted" style="margin:0">${rep.by === "ai" ? "AI" : "端末内ルール"}で作成・${fmtClock(rep.at)}</p></div>` : "";
+    html += `<p><button class="btn ${rep ? "" : "primary"}" id="dl-make">${rep ? "作り直す" : `${fmtDay(d.getTime())}の振り返りを作る`}</button></p><div id="dl-busy"></div>`;
+    html += `<h2>この日の記録</h2>` + list.map(recCard).join("");
+  }
+  m.innerHTML = html;
+  $("#dl-day").onchange = e => { location.hash = "#/daily/" + e.target.value; };
+  $$(".rec-item", m).forEach(b => b.onclick = () => { location.hash = "#/r/" + b.dataset.rec; });
+  const mk = $("#dl-make"); if (!mk) return;
+  mk.onclick = async () => {
+    mk.disabled = true; $("#dl-busy").innerHTML = `<div class="busy"><span class="spin"></span>作成中… <span id="ai-wait"></span></div>`;
+    try { await DB.put("daily", await makeDaily(date, list)); } catch (e) { toast(e.message); }
+    render();
+  };
+}
+const DAILY_HEADS = ["今日のハイライト", "話した話題", "決まったこと", "やること"];
+async function makeDaily(date, list) {
+  if (aiOn()) {
+    let ctx = "";
+    for (const r of list) {
+      const s = `■${fmtClock(r.created)}「${r.title}」(${fmtTime(r.dur)}) ` + (r.summary ? r.summary.sections.map(x => x.heading + ": " + x.items.join(" / ")).join(" ｜ ") : recText(r).slice(0, 400))
+        + (r.todos.length ? " ｜ ToDo: " + r.todos.map(t => (t.who ? t.who + ":" : "") + t.what + (t.due ? "(" + t.due + ")" : "")).join(" / ") : "") + "\n";
+      if ((ctx + s).length > 4000) break; ctx += s;
+    }
+    const j = await chatJSON(SYS, `${date} の1日分の記録から、本人向けの振り返りを作ってください。
+見出しは ${DAILY_HEADS.join(" / ")} の順。次のJSONで: {"sections":[{"heading":"見出し","items":["短い文"]}]}
+「今日のハイライト」は2〜3個。「やること」は担当と期限があれば添えます。
+
+${ctx}`, 2000, "振り返り");
+    const secs = Array.isArray(j.sections) ? j.sections : [];
+    return {date, by: "ai", at: Date.now(), sections: DAILY_HEADS.map(h => { const s = secs.find(x => x && x.heading === h) || {}; return {heading: h, items: (Array.isArray(s.items) ? s.items : []).map(String)}; })};
+  }
+  const pick = re => list.flatMap(r => (r.summary ? r.summary.sections : []).filter(s => re.test(s.heading)).flatMap(s => s.items));
+  return {date, by: "rule", at: Date.now(), sections: [
+    {heading: DAILY_HEADS[0], items: list.map(r => `${fmtClock(r.created)} ${r.title}（${fmtTime(r.dur)}）`)},
+    {heading: DAILY_HEADS[1], items: [...new Set(list.flatMap(r => r.summary ? r.summary.keywords : R.keywords(recText(r), 5)))].slice(0, 10)},
+    {heading: DAILY_HEADS[2], items: pick(/決定|合意/)},
+    {heading: DAILY_HEADS[3], items: list.flatMap(r => r.todos.filter(t => !t.done).map(t => (t.who ? t.who + "：" : "") + t.what + (t.due ? `（${fmtDue(t.due)}）` : "")))},
+  ]};
+}
+// 設定
+function viewSettings(m) {
+  m.innerHTML = `<div class="top">${logo}<h1 class="spacer">設定</h1></div>
+  <div class="card">
+    <div class="field"><label for="st-key">Groq の APIキー（無料）</label>
+      <div class="row"><input type="password" id="st-key" value="${esc(settings.key)}" placeholder="gsk_..." autocomplete="off" spellcheck="false" style="flex:1;min-width:0"><button class="btn sm" id="st-show">表示</button><button class="btn sm" id="st-test">接続テスト</button></div>
+      <div class="hint">入れると、文字起こし（Whisper）と要約・話者分け・質問をAIで行います。キーはこの端末のブラウザにだけ保存されます。<br>
+      取り方: <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> にGoogleアカウント等でログイン →「Create API Key」→ 表示された gsk_… を貼る（クレジットカード不要）。<br>
+      無料枠の目安: 文字起こし1日8時間分、要約は1分あたり約5,000字ずつ（長い会議は録音中に少しずつ処理します）。</div>
+      <div id="st-res" class="small"></div></div>
+    <div class="field"><label class="switch"><input type="checkbox" id="st-secret" ${settings.secret ? "checked" : ""}><span><b>社外秘モード</b><br><span class="small muted">AIへ送らず、端末内だけで処理します（文字起こしはブラウザの音声認識、要約はルール）。社外秘の会議ではオンにしてください。</span></span></label></div>
+    <div class="note">AIを使うと、音声と文字起こしは Groq社（米国）のサーバーへ送られます。送信先は Groq だけで、このアプリの作者には届きません。</div>
+  </div>
+  <h2>要約</h2>
+  <div class="card">
+    <div class="field"><label for="st-tpl">録音を始めるときのテンプレート</label><select id="st-tpl">${R.TEMPLATES.map(t => `<option value="${t.id}" ${t.id === settings.tpl ? "selected" : ""}>${esc(t.name)}（${esc(t.desc)}）</option>`).join("")}</select></div>
+    <div class="field"><label for="st-model">要約のAIモデル</label><select id="st-model">${MODELS.map(([k, n]) => `<option value="${k}" ${k === settings.model ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
+    <div class="field"><label for="st-stt">文字起こしのモデル</label><select id="st-stt">${STT_MODELS.map(([k, n]) => `<option value="${k}" ${k === settings.stt ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
+    <div class="field"><label for="st-chunk">文字起こしの区切り</label><select id="st-chunk">${[20, 30, 60].map(n => `<option value="${n}" ${n === settings.chunkSec ? "selected" : ""}>${n}秒ごと</option>`).join("")}</select>
+      <div class="hint">短いほど録音中に早く文字が出ます。</div></div>
+    <div class="field"><label for="st-theme">表示</label><select id="st-theme">${[["auto", "端末に合わせる"], ["light", "ライト"], ["dark", "ダーク"]].map(([k, n]) => `<option value="${k}" ${k === settings.theme ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+  </div>
+  <h2>データ</h2>
+  <div class="card">
+    <p class="small" style="margin-top:0">記録はこの端末のブラウザの中にだけあります（他の端末とは同期しません）。<span id="st-usage"></span></p>
+    <div class="row"><button class="btn sm" id="st-backup">バックアップを保存（音声なし）</button><label class="btn sm">バックアップを読み込む<input type="file" id="st-restore" accept=".json,application/json" hidden></label><button class="btn sm danger" id="st-wipe">すべて削除</button></div>
+  </div>
+  <p class="small muted">AI議事録 — 録音・文字起こし・要約・ToDo・振り返り。</p>`;
+  const key = $("#st-key");
+  key.onchange = () => { settings.key = key.value.trim(); saveSettings(); };
+  $("#st-show").onclick = () => { key.type = key.type === "password" ? "text" : "password"; $("#st-show").textContent = key.type === "password" ? "表示" : "隠す"; };
+  $("#st-test").onclick = async () => {
+    settings.key = key.value.trim(); saveSettings();
+    const res = $("#st-res"); res.textContent = "確認中…";
+    if (!settings.key) { res.textContent = "キーが空です"; return; }
+    try { const j = await chatJSON("JSONで答える", '{"ok":true} とだけ返してください', 50, "接続テスト"); res.innerHTML = j ? `<span style="color:var(--ok)">つながりました（${esc(settings.model)}）</span>` : ""; }
+    catch (e) { res.innerHTML = `<span style="color:var(--rec)">${esc(e.message)}</span>`; }
+  };
+  $("#st-secret").onchange = e => { settings.secret = e.target.checked; saveSettings(); };
+  $("#st-tpl").onchange = e => { settings.tpl = e.target.value; saveSettings(); };
+  $("#st-model").onchange = e => { settings.model = e.target.value; saveSettings(); };
+  $("#st-stt").onchange = e => { settings.stt = e.target.value; saveSettings(); };
+  $("#st-chunk").onchange = e => { settings.chunkSec = +e.target.value; saveSettings(); };
+  $("#st-theme").onchange = e => { settings.theme = e.target.value; saveSettings(); };
+  if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(e => { const u = $("#st-usage"); if (u) u.textContent = `使用量 約${(e.usage / 1e6).toFixed(1)}MB。`; }).catch(() => {});
+  $("#st-backup").onclick = () => download(`AI議事録_バックアップ_${dayKey(Date.now())}.json`, JSON.stringify({app: "aigiji", v: 1, records: [...recs.values()]}, null, 1), "application/json");
+  $("#st-restore").onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const j = JSON.parse(await f.text()); if (!j || j.app !== "aigiji" || !Array.isArray(j.records)) throw new Error();
+      let n = 0; for (const r of j.records) if (r && r.id && !recs.has(r.id)) { if (r.state === "rec" || r.state === "proc") r.state = "done"; r.stage = ""; await save(r); n++; }
+      toast(`${n}件の記録を読み込みました`);
+    } catch (err) { toast("読み込めませんでした（このアプリのバックアップではありません）"); }
+  };
+  $("#st-wipe").onclick = async () => {
+    if (!confirm("すべての記録と音声を削除します。元に戻せません。よろしいですか？")) return;
+    for (const id of [...recs.keys()]) { await DB.delRecord(id); recs.delete(id); }
+    for (const d of await DB.all("daily")) await DB.del("daily", d.date);
+    toast("削除しました");
+  };
+}
+
+// 書き出し
+function transcriptText(rec) { return rec.segs.map(s => `[${fmtTime(s.t)}] ${s.spk ? spkName(rec, s.spk) + ": " : ""}${s.text}`).join("\n"); }
+function markdown(rec, withTranscript) {
+  const L = [`# ${rec.title}`, "", `- 日時: ${R.iso(new Date(rec.created))}（${WDAY[new Date(rec.created).getDay()]}） ${fmtClock(rec.created)}`, `- 長さ: ${fmtTime(rec.dur)}`];
+  const ks = [...new Set(rec.segs.map(s => s.spk).filter(Boolean))];
+  if (ks.length) L.push(`- 話者: ${ks.map(k => spkName(rec, k)).join("、")}`);
+  if (rec.summary) for (const s of rec.summary.sections) { L.push("", `## ${s.heading}`); L.push(...(s.items.length ? s.items.map(i => `- ${i}`) : ["- （該当なし）"])); }
+  if (rec.todos.length) { L.push("", "## ToDo"); for (const t of rec.todos) L.push(`- [${t.done ? "x" : " "}] ${t.who ? t.who + "：" : ""}${t.what}${t.due ? `（期限 ${fmtDue(t.due)}）` : ""}`); }
+  if (withTranscript && rec.segs.length) L.push("", "## 文字起こし", "", transcriptText(rec));
+  return L.join("\n") + "\n";
+}
+function exportSheet(rec) {
+  sheet(`<h3>書き出し</h3><label class="switch small"><input type="checkbox" id="ex-tr" checked><span>文字起こしも含める</span></label>
+    <div class="row" style="margin-top:12px"><button class="btn" data-copy>コピー</button><button class="btn" data-md>.md で保存</button><button class="btn" data-txt>.txt で保存</button><button class="btn" data-print>印刷</button></div>
+    <p class="small muted">コピーした内容はメール・Teams・Wordにそのまま貼れます。</p><div class="row"><span class="spacer"></span><button class="btn" data-x>閉じる</button></div>`,
+  (s, close) => {
+    const md = () => markdown(rec, $("#ex-tr", s).checked);
+    const fname = ext => `${R.iso(new Date(rec.created))}_${rec.title.replace(/[\\/:*?"<>|]/g, "_")}.${ext}`;
+    $("[data-x]", s).onclick = close;
+    $("[data-copy]", s).onclick = () => { copy(md()); close(); };
+    $("[data-md]", s).onclick = () => { download(fname("md"), md()); close(); };
+    $("[data-txt]", s).onclick = () => { download(fname("txt"), md().replace(/^#+ /gm, "■ ").replace(/^- \[x\] /gm, "☑ ").replace(/^- \[ \] /gm, "☐ ").replace(/^- /gm, "・")); close(); };
+    $("[data-print]", s).onclick = () => { close(); printRec(rec, $("#ex-tr", s).checked); };
+  });
+}
+function printRec(rec, withTr) {
+  const w = $("#main");
+  const back = w.innerHTML;
+  w.innerHTML = `<h1>${esc(rec.title)}</h1><p class="small">${fmtDay(rec.created)} ${fmtClock(rec.created)}・${fmtTime(rec.dur)}</p>`
+    + (rec.summary ? rec.summary.sections.map(sec => `<div class="sec"><h3>${esc(sec.heading)}</h3><ul>${sec.items.map(i => `<li>${esc(i)}</li>`).join("") || "<li>（該当なし）</li>"}</ul></div>`).join("") : "")
+    + (rec.todos.length ? `<div class="sec"><h3>ToDo</h3><ul>${rec.todos.map(t => `<li>${t.done ? "☑" : "☐"} ${esc((t.who ? t.who + "：" : "") + t.what)}${t.due ? "（期限 " + esc(fmtDue(t.due)) + "）" : ""}</li>`).join("")}</ul></div>` : "")
+    + (withTr ? `<div class="sec"><h3>文字起こし</h3>${rec.segs.map(s => `<p style="margin:2px 0"><span class="num small">${fmtTime(s.t)}</span> ${s.spk ? "<b>" + esc(spkName(rec, s.spk)) + "</b>: " : ""}${esc(s.text)}</p>`).join("")}</div>` : "");
+  setTimeout(() => { window.print(); w.innerHTML = back; render(); }, 50);
+}
+function moreSheet(rec) {
+  sheet(`<h3>${esc(rec.title)}</h3><div class="row">
+    ${rec.state !== "rec" && rec.segs.length ? '<button class="btn" data-sum>要約し直す</button>' : ""}
+    <button class="btn danger" data-del>この記録を削除</button><span class="spacer"></span><button class="btn" data-x>閉じる</button></div>`,
+  (s, close) => {
+    $("[data-x]", s).onclick = close;
+    const su = $("[data-sum]", s); if (su) su.onclick = () => { close(); resummarize(rec); };
+    $("[data-del]", s).onclick = async () => {
+      if (rec.state === "rec") { toast("録音中は削除できません"); return; }
+      if (!confirm("この記録と音声を削除します。よろしいですか？")) return;
+      await DB.delRecord(rec.id); recs.delete(rec.id); close(); location.hash = "#/";
+    };
+  });
+}
+function copy(text) {
+  const done = () => toast("コピーしました");
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, () => fallback());
+  else fallback();
+  function fallback() { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { toast("コピーできませんでした"); } t.remove(); }
+}
+function download(name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type: (type || "text/plain") + ";charset=utf-8"}));
+  a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+// ---------- 起動 ----------
+$("#fab").onclick = async () => {
+  if (Recorder.active) { openRecView(); return; }
+  openRecView();
+  $("#rv-state").textContent = "マイクを準備中…";
+  if (!(await Recorder.start())) { $("#overlay").innerHTML = ""; return; }
+  drawRecView(); drawLive(); render();
+};
+$$("#nav button[data-go]").forEach(b => b.onclick = () => { location.hash = b.dataset.go === "home" ? "#/" : "#/" + b.dataset.go; });
+window.addEventListener("hashchange", () => { window.scrollTo(0, 0); render(); });
+window.addEventListener("online", () => { for (const r of recs.values()) if (r.state === "proc" || r.err) Pipeline.kick(r.id); });
+window.addEventListener("beforeunload", e => { if (Recorder.active) { e.preventDefault(); e.returnValue = ""; } });
+(async function boot() {
+  loadSettings(); applyTheme();
+  await DB.open();
+  for (const r of await DB.all("records")) {
+    if (r.state === "rec") r.state = "proc";   // 録音中に閉じた記録は、保存できた分から続ける
+    r.stage = ""; recs.set(r.id, r);
+  }
+  render();
+  for (const r of recs.values()) if (r.state === "proc") Pipeline.kick(r.id);
+})();
+window.__aigiji = {DB, recs, settings: () => settings, save, Pipeline, Recorder, render, ruleSummary, markdown};   // UIテスト用
+
+</script>
+<script>if('serviceWorker' in navigator && location.protocol.startsWith('http')){var hadSW=!!navigator.serviceWorker.controller,reloaded=false;navigator.serviceWorker.addEventListener('controllerchange',function(){if(hadSW&&!reloaded&&!(window.__aigiji&&window.__aigiji.Recorder.active)){reloaded=true;location.reload();}});navigator.serviceWorker.register('sw.js').catch(function(){});}</script>
+</body>
+</html>

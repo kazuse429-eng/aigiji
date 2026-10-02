@@ -375,9 +375,9 @@ const isLate = s => /^\d{4}-\d\d-\d\d$/.test(s || "") && s < dayKey(Date.now());
 
 // ---------- 設定（localStorage。ブラウザごと） ----------
 const STORE_KEY = "aigiji.v1";
-const MODELS = [["openai/gpt-oss-120b", "GPT-OSS 120B（おすすめ）"], ["openai/gpt-oss-20b", "GPT-OSS 20B（速い）"], ["qwen/qwen3.8-27b", "Qwen3.8 27B"], ["llama-3.3-70b-versatile", "Llama 3.3 70B"]];
+const MODELS = [["openai/gpt-oss-120b", "GPT-OSS 120B（おすすめ）"], ["openai/gpt-oss-20b", "GPT-OSS 20B（速い）"], ["qwen/qwen3.8-27b", "Qwen3.8 27B"]];
 const STT_MODELS = [["whisper-large-v3", "Whisper large-v3（正確）"], ["whisper-large-v3-turbo", "Whisper large-v3 turbo（速い）"]];
-let settings = {key: "", model: MODELS[0][0], stt: STT_MODELS[0][0], secret: false, tpl: "meeting", chunkSec: 30, theme: "auto", base: "https://api.groq.com/openai/v1"};
+let settings = {key: "", model: MODELS[0][0], stt: STT_MODELS[0][0], secret: false, tpl: "meeting", chunkSec: 30, theme: "auto", words: "", base: "https://api.groq.com/openai/v1"};
 function loadSettings() { try { const s = JSON.parse(localStorage.getItem(STORE_KEY)); if (s && typeof s === "object") settings = Object.assign(settings, s); } catch (e) {} }
 function saveSettings() { try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) {} applyTheme(); }
 function applyTheme() { if (settings.theme === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", settings.theme); }
@@ -483,6 +483,9 @@ async function chatText(system, user, maxOut) {
   if (j.usage && j.usage.total_tokens) slot[1] = j.usage.total_tokens;
   return ((j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "").trim();
 }
+// よく使う言葉（設定）。文字起こしの手がかりと、要約での表記合わせに使う
+const glossary = () => String(settings.words || "").split(/[、,，\s]+/).map(w => w.trim()).filter(Boolean).slice(0, 40);
+const glossaryLine = () => glossary().length ? `\nよく出る言葉（この表記に合わせる）: ${glossary().join("、")}` : "";
 // Whisperがよく作る «無音のときの決まり文句» は捨てる
 const HALLU = /^(ご視聴ありがとうございました|ご清聴ありがとうございました|チャンネル登録.*|最後までご視聴.*|おやすみなさい|字幕.*|[(（]?(音楽|拍手|笑い?|BGM)[)）]?|♪+|はい|ん)[。.!！\s]*$/;
 async function transcribe(blob, mime, prompt) {
@@ -493,7 +496,9 @@ async function transcribe(blob, mime, prompt) {
   fd.append("language", "ja");
   fd.append("response_format", "verbose_json");
   fd.append("temperature", "0");
-  if (prompt) fd.append("prompt", prompt.slice(-120));
+  const words = glossary().join("、").slice(0, 100);   // Whisperの手がかりは224トークンまで。言葉を先に、直前の文を後に
+  const hint = (words ? words + "。" : "") + (prompt || "").slice(-(words ? 80 : 120));
+  if (hint) fd.append("prompt", hint);
   const j = await groqFetch("/audio/transcriptions", {method: "POST", body: fd}, "文字起こし");
   const segs = (j.segments && j.segments.length ? j.segments : [{start: 0, text: j.text || "", no_speech_prob: 0, avg_logprob: 0}]);
   return segs.map(s => ({start: s.start || 0, text: String(s.text || "").trim(), ns: s.no_speech_prob || 0, lp: s.avg_logprob || 0}))
@@ -571,12 +576,18 @@ const Pipeline = {
  "names":{"話者番号":"名前（自己紹介や呼びかけで確実にわかる場合だけ。わからなければ入れない）"},
  "topics":["話題"],"decisions":["決まったこと"],"points":["議論の要点・数字・条件"],"issues":["課題・懸念・未決事項"],
  "todos":[{"who":"担当（不明なら空）","due":"期限（YYYY-MM-DDにできれば変換、無理なら原文、無ければ空）","what":"やること"}]}
-話者は声を聞けないので、話の流れ（質問と回答、呼びかけ、立場、話し方）から推定します。直前の発言と同じ人なら同じ番号を使います。
-録音日は ${R.iso(new Date(rec.created))}（${WDAY[new Date(rec.created).getDay()]}曜）。各項目は短い日本語の文で、該当が無ければ空配列。`,
+話者は声を聞けないので、話の流れから推定します。決まり:
+- 話者の数はできるだけ少なく見積もる。${rec.people ? `参加者は${rec.people}人（番号は1〜${rec.people}だけを使う）。` : "会議はふつう2〜4人。"}話題が変わっただけで新しい話者にしない。
+- 問いかけ（〜ですか、〜ですよね）と、それに「はい」「了解です」「そうですね」で応じる発言は別の人。依頼した人と引き受けた人も別の人。
+- 同じ人が続けて話すこともある。直前の発言と同じ人なら同じ番号を使う。
+- speakers の役割は話題（照明・カメラ等）ではなく立場（進行役、発注側、設計担当など）で書く。
+- todos の who は、名前で頼まれたらその名前、「私が」「私の方で」など本人が引き受けたらその話者番号を "S2" の形で入れる。
+録音日は ${R.iso(new Date(rec.created))}（${WDAY[new Date(rec.created).getDay()]}曜）。各項目は短い日本語の文で、該当が無ければ空配列。${glossaryLine()}`,
       ].filter(Boolean).join("\n\n");
       const j = await chatJSON(SYS, user, 2000, "整理");
       const labels = Array.isArray(j.labels) ? j.labels : [];
-      piece.forEach((s, i) => { const v = parseInt(labels[i], 10); if (!s.fixed) s.spk = v > 0 && v < 20 ? String(v) : (i ? piece[i - 1].spk : (rec.segs[from - 1] || {}).spk || "1"); });
+      const maxSpk = rec.people || 19;
+      piece.forEach((s, i) => { const v = parseInt(labels[i], 10); if (!s.fixed) s.spk = v > 0 && v <= maxSpk ? String(v) : (i ? piece[i - 1].spk : (rec.segs[from - 1] || {}).spk || "1"); });
       rec.profile = Object.assign(rec.profile || {}, j.speakers || {});
       rec.names = rec.names || {};
       for (const [k, v] of Object.entries(j.names || {})) if (v && !rec.names[k] && String(v).length <= 12) rec.names[k] = String(v);
@@ -623,6 +634,7 @@ const Pipeline = {
 {"title":"内容がわかる20字以内の題名","sections":[{"heading":"見出し","items":["箇条書き1行ずつ。具体的に（数字・条件・固有名詞を残す）"]}],
  "todos":[{"who":"担当（不明なら空）","due":"YYYY-MM-DD か 原文の期限表現 か 空","what":"やること"}],"keywords":["キーワード5〜8個"]}
 「概要」は2〜3文。該当が無い見出しは items を空にします。ToDoは重複をまとめます。
+ToDoの who は、メモの "S2" のような話者番号を上の話者の名前（例: ${spkName(rec, "1")}）に直して入れます。何の作業かは発言どおりに書き、対象を推測で足しません。${glossaryLine()}
 
 区切りごとのメモ:
 ${JSON.stringify(notes)}${full}`;
@@ -633,7 +645,8 @@ ${JSON.stringify(notes)}${full}`;
       sections: tpl.sections.map(([h]) => { const s = secs.find(x => x && x.heading === h) || {}; return {heading: h, items: (Array.isArray(s.items) ? s.items : s.items ? [s.items] : []).map(String)}; }),
       keywords: (Array.isArray(j.keywords) ? j.keywords : []).map(String).slice(0, 10),
     };
-    mergeTodos(rec, Array.isArray(j.todos) ? j.todos : []);
+    const who = w => String(w || "").replace(/^S(\d+)$/i, (m, k) => spkName(rec, k));
+    mergeTodos(rec, (Array.isArray(j.todos) ? j.todos : []).map(t => Object.assign({}, t, {who: who(t && t.who)})));
     if (!rec.titleEdited && rec.summary.title) rec.title = rec.summary.title;
   },
 };
@@ -813,8 +826,9 @@ const logo = `<div class="logo" aria-hidden="true">${ICON_MIC}</div>`;
 // 録音画面
 function openRecView() {
   $("#overlay").innerHTML = `<div class="recview" id="recview"><div class="in">
-    <div class="row"><button class="back" id="rv-min" aria-label="閉じる（録音は続く）">&#x2039;</button><b id="rv-title" class="spacer"></b>
-      <select id="rv-tpl" aria-label="要約テンプレート">${R.TEMPLATES.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select></div>
+    <div class="row"><button class="back" id="rv-min" aria-label="閉じる（録音は続く）">&#x2039;</button><b id="rv-title" class="spacer"></b></div>
+    <div class="rec-opts"><span>参加</span><select id="rv-people" aria-label="参加人数"><option value="0">人数不明</option>${[1, 2, 3, 4, 5, 6, 7, 8].map(n => `<option value="${n}">${n}人</option>`).join("")}</select>
+      <span>要約</span><select id="rv-tpl" aria-label="要約テンプレート">${R.TEMPLATES.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select></div>
     <div class="clock" id="rv-clock">0:00</div>
     <div class="state" id="rv-state"></div>
     <div class="level"><i id="rv-level"></i></div>
@@ -829,12 +843,14 @@ function openRecView() {
   $("#rv-stop").onclick = () => Recorder.stop();
   $("#rv-pause").onclick = () => Recorder.paused ? Recorder.resume() : Recorder.pause();
   $("#rv-tpl").onchange = e => { Recorder.rec.tpl = e.target.value; save(Recorder.rec); };
+  $("#rv-people").onchange = e => { Recorder.rec.people = +e.target.value; save(Recorder.rec); };
   drawRecView(); drawLive();
 }
 function drawRecView() {
   if (!$("#recview") || !Recorder.rec) return;
   $("#rv-title").textContent = Recorder.rec.title;
   $("#rv-tpl").value = Recorder.rec.tpl;
+  $("#rv-people").value = String(Recorder.rec.people || 0);
   $("#rv-state").innerHTML = Recorder.paused ? "一時停止中" : `<span class="dot"></span>録音中`;
   $("#rv-pause").innerHTML = Recorder.paused ? '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>';
   $("#rv-pause").setAttribute("aria-label", Recorder.paused ? "再開" : "一時停止");
@@ -1229,6 +1245,8 @@ function viewSettings(m) {
   <h2>要約</h2>
   <div class="card">
     <div class="field"><label for="st-tpl">録音を始めるときのテンプレート</label><select id="st-tpl">${R.TEMPLATES.map(t => `<option value="${t.id}" ${t.id === settings.tpl ? "selected" : ""}>${esc(t.name)}（${esc(t.desc)}）</option>`).join("")}</select></div>
+    <div class="field"><label for="st-words">よく使う言葉</label><textarea id="st-words" rows="2" placeholder="例: ラングドシャ、エア排斥、HALCON">${esc(settings.words)}</textarea>
+      <div class="hint">社名・製品名・専門用語を「、」区切りで。AIの文字起こしと要約がこの表記に合わせます（聞き違いが減ります）。</div></div>
     <div class="field"><label for="st-model">要約のAIモデル</label><select id="st-model">${MODELS.map(([k, n]) => `<option value="${k}" ${k === settings.model ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div class="field"><label for="st-stt">文字起こしのモデル</label><select id="st-stt">${STT_MODELS.map(([k, n]) => `<option value="${k}" ${k === settings.stt ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div class="field"><label for="st-chunk">文字起こしの区切り</label><select id="st-chunk">${[20, 30, 60].map(n => `<option value="${n}" ${n === settings.chunkSec ? "selected" : ""}>${n}秒ごと</option>`).join("")}</select>
@@ -1254,6 +1272,7 @@ function viewSettings(m) {
   $("#st-secret").onchange = e => { settings.secret = e.target.checked; saveSettings(); };
   $("#st-tpl").onchange = e => { settings.tpl = e.target.value; saveSettings(); };
   $("#st-model").onchange = e => { settings.model = e.target.value; saveSettings(); };
+  $("#st-words").onchange = e => { settings.words = e.target.value.trim(); saveSettings(); };
   $("#st-stt").onchange = e => { settings.stt = e.target.value; saveSettings(); };
   $("#st-chunk").onchange = e => { settings.chunkSec = +e.target.value; saveSettings(); };
   $("#st-theme").onchange = e => { settings.theme = e.target.value; saveSettings(); };

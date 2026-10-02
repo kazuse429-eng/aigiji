@@ -148,6 +148,11 @@ nav.bar button.on{color:var(--accent);font-weight:700}
 .rbtn.stop svg{fill:#fff}
 .rec-opts{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;font-size:.88rem;color:var(--muted)}
 
+.blackout{position:fixed;inset:0;background:#000;z-index:70;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#3a3a3a;cursor:pointer}
+.blackout .c{font-family:var(--font-num);font-size:1.8rem}
+.blackout small{font-size:.8rem;color:#2c2c2c}
+.gap{margin:6px 0;padding:4px 10px;border-radius:8px;background:var(--warn-soft);color:var(--warn);font-size:.84rem;text-align:center}
+
 /* 進行中の処理 */
 .busy{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.9rem;margin:8px 0}
 .spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex:none}
@@ -463,7 +468,7 @@ async function groqFetch(path, init, label) {
 }
 // チャット。JSONで返させる
 async function chatJSON(system, user, maxOut, label) {
-  const slot = await tpmWait(estTok(system) + estTok(user) + maxOut);
+  const slot = await tpmWait(estTok(system) + estTok(user) + Math.min(maxOut, 1000))   // Groqは出力の上限を全部は先取りしない（実測）。超えたら429の待ちで吸収;
   const body = {model: settings.model, temperature: 0.2, max_completion_tokens: maxOut, response_format: {type: "json_object"},
     messages: [{role: "system", content: system}, {role: "user", content: user}]};
   if (/gpt-oss/.test(settings.model)) Object.assign(body, {reasoning_effort: "low", include_reasoning: false});
@@ -476,20 +481,32 @@ async function chatJSON(system, user, maxOut, label) {
   }
 }
 async function chatText(system, user, maxOut) {
-  const slot = await tpmWait(estTok(system) + estTok(user) + maxOut);
+  const slot = await tpmWait(estTok(system) + estTok(user) + Math.min(maxOut, 1000))   // Groqは出力の上限を全部は先取りしない（実測）。超えたら429の待ちで吸収;
   const body = {model: settings.model, temperature: 0.3, max_completion_tokens: maxOut, messages: [{role: "system", content: system}, {role: "user", content: user}]};
   if (/gpt-oss/.test(settings.model)) Object.assign(body, {reasoning_effort: "low", include_reasoning: false});
   const j = await groqFetch("/chat/completions", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}, "AIに質問");
   if (j.usage && j.usage.total_tokens) slot[1] = j.usage.total_tokens;
   return ((j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "").trim();
 }
+// 録音日から3週間ぶんの日付と曜日（AIは曜日の計算を間違えるので表で渡す）
+function calendarLine(ms) {
+  const b = new Date(ms), mon = new Date(b.getFullYear(), b.getMonth(), b.getDate() - (b.getDay() + 6) % 7);
+  const wk = k => { const d = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + k * 7); return [...Array(7)].map((_, i) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate() + i); return `${x.getMonth() + 1}/${x.getDate()}(${WDAY[x.getDay()]})`; }).join(" "); };
+  return `日付の早見表（今日=${b.getMonth() + 1}/${b.getDate()}(${WDAY[b.getDay()]})）\n今週: ${wk(0)}\n来週: ${wk(1)}\n再来週: ${wk(2)}`;
+}
+// 期限: AIが返した «原文の期限表現» をこちらで日付にする（「来週水曜」→ 2026-10-07）。読めなければAIの値
+function fixDue(t, base) {
+  const raw = String(t.due_text || ""), d = R.parseDue(raw || String(t.due || ""), new Date(base));
+  return d.iso || String(t.due || raw || "");
+}
 // よく使う言葉（設定）。文字起こしの手がかりと、要約での表記合わせに使う
 const glossary = () => String(settings.words || "").split(/[、,，\s]+/).map(w => w.trim()).filter(Boolean).slice(0, 40);
 const glossaryLine = () => glossary().length ? `\nよく出る言葉（この表記に合わせる）: ${glossary().join("、")}` : "";
 // Whisperがよく作る «無音のときの決まり文句» は捨てる
 const HALLU = /^(ご視聴ありがとうございました|ご清聴ありがとうございました|チャンネル登録.*|最後までご視聴.*|おやすみなさい|字幕.*|[(（]?(音楽|拍手|笑い?|BGM)[)）]?|♪+|はい|ん)[。.!！\s]*$/;
-async function transcribe(blob, mime, prompt) {
-  const ext = /mp4|m4a|aac/.test(mime) ? "m4a" : /ogg/.test(mime) ? "ogg" : /wav/.test(mime) ? "wav" : "webm";
+async function transcribe(blob, mime, prompt, name) {
+  const byName = /\.(flac|mp3|mp4|mpeg|mpga|m4a|ogg|wav|webm)$/i.exec(name || "");
+  const ext = byName ? byName[1].toLowerCase() : /mpeg|mp3/.test(mime) ? "mp3" : /flac/.test(mime) ? "flac" : /mp4|m4a|aac/.test(mime) ? "m4a" : /ogg/.test(mime) ? "ogg" : /wav/.test(mime) ? "wav" : "webm";
   const fd = new FormData();
   fd.append("file", blob, "chunk." + ext);
   fd.append("model", settings.stt);
@@ -533,14 +550,16 @@ const Pipeline = {
         rec.stage = `文字起こし中 ${chunks.length - todo.length + k}/${chunks.length}${rec.state === "rec" ? "（録音中）" : ""}`; refresh(id);
         if (c.peak >= SILENT) {
           const prev = rec.segs.filter(s => s.t < c.t0).map(s => s.text).join("").slice(-120);
-          const out = await transcribe(c.blob, c.mime, prev);
+          const out = await transcribe(c.blob, c.mime, prev, c.name);
           rec.segs = rec.segs.filter(s => !(s.chunk === c.i)).concat(out.map(s => ({t: Math.min(c.t0 + s.start, c.t1), text: s.text, spk: "", chunk: c.i})));
           rec.segs.sort((a, b) => a.t - b.t);
         }
-        c.done = true; await DB.put("chunks", c); await save(rec); refresh(id);
+        c.done = true; if (c.play === false) c.blob = null;   // 読み込んだ音声の «文字起こし用の切れ端» は済んだら消す（再生は元のファイルで）
+        await DB.put("chunks", c); await save(rec); refresh(id);
         await this.notes(rec, false);
       }
       }
+      if (!rec.dur && rec.segs.length) rec.dur = rec.segs[rec.segs.length - 1].t + 5;   // 長さが読めなかったファイル
       // 2) 録音が終わっていれば、残りをメモ化して要約
       if (rec.state === "proc") {
         await this.notes(rec, true);
@@ -575,14 +594,15 @@ const Pipeline = {
  "speakers":{"話者番号":"その人の役割・特徴を短く（名前で呼ばれていれば名前も）"},
  "names":{"話者番号":"名前（自己紹介や呼びかけで確実にわかる場合だけ。わからなければ入れない）"},
  "topics":["話題"],"decisions":["決まったこと"],"points":["議論の要点・数字・条件"],"issues":["課題・懸念・未決事項"],
- "todos":[{"who":"担当（不明なら空）","due":"期限（YYYY-MM-DDにできれば変換、無理なら原文、無ければ空）","what":"やること"}]}
+ "todos":[{"who":"担当（不明なら空）","due_text":"期限の原文どおりの表現（例: 来週水曜まで。無ければ空）","due":"YYYY-MM-DD（早見表で変換。無理なら空）","what":"やること（発言どおり。対象を推測で足さない）"}]}
 話者は声を聞けないので、話の流れから推定します。決まり:
 - 話者の数はできるだけ少なく見積もる。${rec.people ? `参加者は${rec.people}人（番号は1〜${rec.people}だけを使う）。` : "会議はふつう2〜4人。"}話題が変わっただけで新しい話者にしない。
 - 問いかけ（〜ですか、〜ですよね）と、それに「はい」「了解です」「そうですね」で応じる発言は別の人。依頼した人と引き受けた人も別の人。
 - 同じ人が続けて話すこともある。直前の発言と同じ人なら同じ番号を使う。
 - speakers の役割は話題（照明・カメラ等）ではなく立場（進行役、発注側、設計担当など）で書く。
 - todos の who は、名前で頼まれたらその名前、「私が」「私の方で」など本人が引き受けたらその話者番号を "S2" の形で入れる。
-録音日は ${R.iso(new Date(rec.created))}（${WDAY[new Date(rec.created).getDay()]}曜）。各項目は短い日本語の文で、該当が無ければ空配列。${glossaryLine()}`,
+各項目は短い日本語の文で、該当が無ければ空配列。話されていない対象・数字・日付を足さない。
+${calendarLine(rec.created)}${glossaryLine()}`,
       ].filter(Boolean).join("\n\n");
       const j = await chatJSON(SYS, user, 2000, "整理");
       const labels = Array.isArray(j.labels) ? j.labels : [];
@@ -592,7 +612,8 @@ const Pipeline = {
       rec.names = rec.names || {};
       for (const [k, v] of Object.entries(j.names || {})) if (v && !rec.names[k] && String(v).length <= 12) rec.names[k] = String(v);
       const pick = k => (Array.isArray(j[k]) ? j[k] : []).filter(Boolean);
-      rec.notes.push({from, to, topics: pick("topics"), decisions: pick("decisions"), points: pick("points"), issues: pick("issues"), todos: pick("todos")});
+      const todos = pick("todos").map(t => ({who: t.who || "", due: fixDue(t, rec.created), what: t.what || ""}));
+      rec.notes.push({from, to, topics: pick("topics"), decisions: pick("decisions"), points: pick("points"), issues: pick("issues"), todos});
       await save(rec); refresh(rec.id);
     }
   },
@@ -629,10 +650,12 @@ const Pipeline = {
     const full = recText(rec).length <= 2800 ? "\n\n文字起こし全文:\n" + rec.segs.map(s => `[${fmtTime(s.t)}] ${spkName(rec, s.spk)}: ${s.text}`).join("\n") : "";
     const user = `テンプレート「${tpl.name}」で議事録の要約を作ってください。
 見出しは次の順に、すべて使います: ${tpl.sections.map(s => s[0]).join(" / ")}
-録音日: ${R.iso(new Date(rec.created))}（${WDAY[new Date(rec.created).getDay()]}曜）　長さ: ${fmtTime(rec.dur)}　話者: ${people || "不明"}
+長さ: ${fmtTime(rec.dur)}　話者: ${people || "不明"}
+${calendarLine(rec.created)}
 次のJSONで答えてください。
 {"title":"内容がわかる20字以内の題名","sections":[{"heading":"見出し","items":["箇条書き1行ずつ。具体的に（数字・条件・固有名詞を残す）"]}],
- "todos":[{"who":"担当（不明なら空）","due":"YYYY-MM-DD か 原文の期限表現 か 空","what":"やること"}],"keywords":["キーワード5〜8個"]}
+ "todos":[{"who":"担当（不明なら空）","due_text":"期限の原文どおりの表現（無ければ空）","due":"YYYY-MM-DD（早見表で変換。無理なら空）","what":"やること"}],"keywords":["キーワード5〜8個"]}
+本文中の日付も早見表で確かめて書きます（曜日を自分で計算しない）。
 「概要」は2〜3文。該当が無い見出しは items を空にします。ToDoは重複をまとめます。
 ToDoの who は、メモの "S2" のような話者番号を上の話者の名前（例: ${spkName(rec, "1")}）に直して入れます。何の作業かは発言どおりに書き、対象を推測で足しません。${glossaryLine()}
 
@@ -646,7 +669,7 @@ ${JSON.stringify(notes)}${full}`;
       keywords: (Array.isArray(j.keywords) ? j.keywords : []).map(String).slice(0, 10),
     };
     const who = w => String(w || "").replace(/^S(\d+)$/i, (m, k) => spkName(rec, k));
-    mergeTodos(rec, (Array.isArray(j.todos) ? j.todos : []).map(t => Object.assign({}, t, {who: who(t && t.who)})));
+    mergeTodos(rec, (Array.isArray(j.todos) ? j.todos : []).filter(Boolean).map(t => ({what: t.what, who: who(t.who), due: fixDue(t, rec.created)})));
     if (!rec.titleEdited && rec.summary.title) rec.title = rec.summary.title;
   },
 };
@@ -691,7 +714,7 @@ const Recorder = {
     if (!aiOn()) this.startSpeech();
     this.keepAwake();
     this.tick = setInterval(() => this.onTick(), 500);
-    this.stream.getTracks().forEach(t => t.addEventListener("ended", () => { if (this.active && !this.paused) { toast("マイクが止まりました。録音を一時停止しました"); this.pause(); } }));
+    this.watchTracks();
     return true;
   },
   startChunk() {
@@ -718,6 +741,7 @@ const Recorder = {
     const e = this.elapsed();
     if (this.cur && !this.paused && e - this.meta.t0 >= settings.chunkSec) this.rotate();
     const clk = $("#rv-clock"); if (clk) clk.textContent = fmtTime(e);
+    const bo = $("#bo-clock"); if (bo) bo.textContent = fmtTime(e);
   },
   meter() {
     try {
@@ -760,6 +784,27 @@ const Recorder = {
     sr.onend = () => { if (this.active && !this.paused && this.speech === sr) try { sr.start(); } catch (e) {} };
     try { sr.start(); this.speech = sr; } catch (e) { this.noSpeech = true; }
   },
+  // マイクが切れた・消音された: 画面に出ていればすぐ、裏にいれば戻ったときに再開する
+  watchTracks() { this.stream.getTracks().forEach(t => { t.onended = () => this.onLost(); t.onmute = () => this.onLost(); }); },
+  onLost() { if (!this.active || this.paused) return; this.lost = true; if (document.visibilityState === "visible") this.restartStream(); },
+  async restartStream() {
+    if (this.restarting || !this.active) return;
+    this.restarting = true;
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
+      const old = this.stream; this.stream = s; this.lost = false;
+      this.watchTracks();
+      cancelAnimationFrame(this.raf); try { this.ctx && this.ctx.close(); } catch (e) {}
+      this.meter();
+      if (!this.paused) {
+        if (this.mime !== null) this.rotate();   // 新しいマイクで次の区切りを始め、古い区切りを閉じる
+        if (!aiOn()) { if (this.speech) { const sp = this.speech; this.speech = null; try { sp.stop(); } catch (e) {} } this.startSpeech(); }
+      }
+      setTimeout(() => old.getTracks().forEach(t => t.stop()), 500);
+      toast("録音を再開しました");
+    } catch (e) { toast("マイクを再開できませんでした。録音を一時停止しました"); this.pause(); }
+    this.restarting = false;
+  },
   async keepAwake() { try { if ("wakeLock" in navigator) this.wake = await navigator.wakeLock.request("screen"); } catch (e) {} },
   pause() {
     if (!this.active || this.paused) return;
@@ -773,7 +818,7 @@ const Recorder = {
     if (!this.active || !this.paused) return;
     this.paused = false; this.since = performance.now();
     if (this.stream.getTracks().some(t => t.readyState === "ended")) {
-      navigator.mediaDevices.getUserMedia({audio: true}).then(s => { this.stream = s; if (this.mime !== null) this.startChunk(); if (!aiOn()) this.startSpeech(); }).catch(() => toast("マイクを再開できませんでした"));
+      navigator.mediaDevices.getUserMedia({audio: true}).then(s => { this.stream = s; this.watchTracks(); cancelAnimationFrame(this.raf); try { this.ctx && this.ctx.close(); } catch (e) {} this.meter(); if (this.mime !== null) this.startChunk(); if (!aiOn()) this.startSpeech(); }).catch(() => toast("マイクを再開できませんでした"));
     } else { if (this.mime !== null) this.startChunk(); if (!aiOn()) this.startSpeech(); }
     drawRecView();
   },
@@ -800,7 +845,17 @@ const Recorder = {
     Pipeline.kick(rec.id);
   },
 };
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Recorder.active && !Recorder.paused) Recorder.keepAwake(); });
+// 裏に回った時刻を覚え、戻ったときにマイクが切れていたら «途切れた区間» として残して再開する
+document.addEventListener("visibilitychange", () => {
+  const R = Recorder; if (!R.active || R.paused) return;
+  if (document.visibilityState === "hidden") { R.hiddenAt = R.elapsed(); return; }
+  R.keepAwake();
+  const from = R.hiddenAt; R.hiddenAt = null;
+  const broken = R.lost || R.stream.getTracks().some(t => t.readyState === "ended" || t.muted);
+  if (!broken) return;
+  if (from != null && R.elapsed() - from > 2) { R.rec.gaps = (R.rec.gaps || []).concat([[from, R.elapsed()]]); save(R.rec); }
+  R.restartStream(); drawLive();
+});
 
 // ---------- 画面 ----------
 const aiStatus = {set(msg) { const el = $("#ai-wait"); if (el) el.textContent = msg; }};
@@ -834,6 +889,7 @@ function openRecView() {
     <div class="level"><i id="rv-level"></i></div>
     <div class="live" id="rv-live" aria-live="polite"></div>
     <div class="rec-ctl">
+      <button class="rbtn" id="rv-dark" aria-label="画面を暗くする（録音は続く）"><svg viewBox="0 0 24 24"><path d="M12.7 3a8.5 8.5 0 1 0 8.3 10.4A7 7 0 0 1 12.7 3z"/></svg></button>
       <button class="rbtn" id="rv-pause" aria-label="一時停止"></button>
       <button class="rbtn stop" id="rv-stop" aria-label="録音を終えて要約"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
     </div>
@@ -841,10 +897,18 @@ function openRecView() {
   </div></div>`;
   $("#rv-min").onclick = () => { $("#overlay").innerHTML = ""; render(); };
   $("#rv-stop").onclick = () => Recorder.stop();
+  $("#rv-dark").onclick = blackout;
   $("#rv-pause").onclick = () => Recorder.paused ? Recorder.resume() : Recorder.pause();
   $("#rv-tpl").onchange = e => { Recorder.rec.tpl = e.target.value; save(Recorder.rec); };
   $("#rv-people").onchange = e => { Recorder.rec.people = +e.target.value; save(Recorder.rec); };
   drawRecView(); drawLive();
+}
+function blackout() {
+  const b = document.createElement("div");
+  b.className = "blackout"; b.setAttribute("role", "button"); b.setAttribute("aria-label", "タップで戻る");
+  b.innerHTML = `<div class="c" id="bo-clock">${fmtTime(Recorder.elapsed())}</div><small>録音中 ・ タップで戻る</small>`;
+  b.onclick = () => b.remove();
+  $("#overlay").appendChild(b);
 }
 function drawRecView() {
   if (!$("#recview") || !Recorder.rec) return;
@@ -858,7 +922,7 @@ function drawRecView() {
   if (Recorder.rec.engine === "ai") notes.push(`AIが${settings.chunkSec}秒ごとに文字起こしします（Groqへ送信）`);
   else notes.push(settings.secret ? "社外秘モード: ブラウザの音声認識で文字起こしし、要約は端末内で行います" : "AIキー未設定: ブラウザの音声認識で文字起こしします");
   if (Recorder.noSpeech && Recorder.rec.engine !== "ai") notes.push("このブラウザは音声認識に対応していません。録音だけ保存します（後でAIキーを入れれば文字起こしできます）");
-  if (/iPhone|iPad/.test(navigator.userAgent)) notes.push("iPhoneは画面をロックしたり他のアプリに切り替えると録音が止まります");
+  if (/iPhone|iPad|Android/.test(navigator.userAgent)) notes.push("画面ロック・別アプリ中は録音が止まることがあります（戻ると自動で再開）。画面を消したいときは月のボタンで暗くしてください。ロックしたまま録るなら、ボイスメモで録音して「ファイルから」で読み込めます");
   $("#rv-note").innerHTML = notes.map(n => `<div>${esc(n)}</div>`).join("");
 }
 function drawLive() {
@@ -867,6 +931,7 @@ function drawLive() {
   const segs = rec.segs.slice(-60);
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   el.innerHTML = (segs.length ? segs.map(s => `<p><span class="muted small num">${fmtTime(s.t)}</span> ${esc(s.text)}</p>`).join("") : "")
+    + (rec.gaps || []).map(g => `<p class="muted small">― ${fmtTime(g[0])}〜${fmtTime(g[1])} 録音が途切れました（再開済み）―</p>`).join("")
     + (Recorder.interim ? `<p class="interim">${esc(Recorder.interim)}</p>` : "")
     + (!segs.length && !Recorder.interim ? `<p class="muted">${rec.engine === "ai" ? `話した内容は約${settings.chunkSec}秒ごとにここへ出ます` : "話すとここに文字が出ます"}</p>` : "")
     + (rec.stage ? `<p class="muted small">${esc(rec.stage)}</p>` : "");
@@ -909,10 +974,11 @@ function viewHome(m) {
   const list = [...recs.values()].sort((a, b) => b.created - a.created);
   const q = searchQ.trim();
   const hit = q ? list.filter(r => (r.title + recText(r) + JSON.stringify(r.summary || "")).includes(q)) : list;
-  let html = `<div class="top">${logo}<h1 class="spacer">AI議事録</h1>${list.length ? '<a class="btn sm" href="#/ask">記録に質問</a>' : ""}</div>`;
+  let html = `<div class="top">${logo}<h1 class="spacer">AI議事録</h1><label class="btn sm" title="ボイスメモなどの録音を読み込む">ファイルから<input type="file" id="imp" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.webm,.flac" hidden></label>${list.length ? '<a class="btn sm" href="#/ask">記録に質問</a>' : ""}</div>`;
   if (!aiOn()) html += `<div class="note">${settings.secret ? "社外秘モード: 文字起こしはブラウザの音声認識、要約は端末内のルールで行います。" : "AIキーが未設定です。<a href=\"#/settings\">設定</a>で無料のGroqキーを入れると、文字起こしと要約が高精度になります。今のままでも端末内で動きます。"}</div>`;
   if (list.length) html += `<input type="search" class="search" id="q" placeholder="記録を検索" value="${esc(searchQ)}" aria-label="記録を検索">`;
-  if (!list.length) html += `<div class="empty"><p style="font-size:1.1rem;color:var(--fg)">まだ記録がありません</p><p>下の赤いマイクを押すと録音が始まります。<br>止めるとAIが要約・ToDo・話者分けをします。</p></div>`;
+  if (!list.length) html += `<div class="empty"><p style="font-size:1.1rem;color:var(--fg)">まだ記録がありません</p><p>下の赤いマイクを押すと録音が始まります。<br>止めるとAIが要約・ToDo・話者分けをします。</p>
+    <p class="small">画面をロックしたまま録りたいときは、iPhoneの「ボイスメモ」で録音 → 共有 →「"ファイル"に保存」→ 右上の「ファイルから」で読み込みます。</p></div>`;
   let day = "";
   for (const rec of hit) {
     const d = fmtDay(rec.created);
@@ -923,6 +989,76 @@ function viewHome(m) {
   m.innerHTML = html;
   const qi = $("#q"); if (qi) qi.oninput = e => { searchQ = e.target.value; const pos = e.target.selectionStart; viewHome(m); const n = $("#q"); n.focus(); n.setSelectionRange(pos, pos); };
   $$(".rec-item", m).forEach(b => b.onclick = () => { location.hash = "#/r/" + b.dataset.rec; });
+  $("#imp").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAudio(f); };
+}
+// ---------- 音声ファイルの読み込み（ボイスメモなど。画面ロック中も録れるアプリで録って、あとでここに入れる） ----------
+const IMPORT_MAX = () => settings.importMax || 24e6;   // Groq無料枠は1ファイル25MBまで。超えたら区切って送る（importMax / importPiece は検証用）
+async function importAudio(file) {
+  if (!aiOn()) { toast(settings.secret ? "社外秘モードでは、ファイルの文字起こしはできません" : "ファイルの文字起こしにはAIキーが必要です（設定で入れてください）"); return; }
+  const dur = await audioDuration(file);
+  const created = (file.lastModified || Date.now()) - (dur ? dur * 1000 : 0);   // ファイルの日時＝録音の終わり
+  const rec = {id: uid(), title: file.name.replace(/\.[^.]+$/, "") || "読み込んだ音声", created, dur, tpl: settings.tpl,
+    segs: [], names: {}, profile: {}, notes: [], summary: null, todos: [], qa: [], state: "proc", engine: "ai", stage: "音声を準備中", err: "", source: "file"};
+  await save(rec); location.hash = "#/r/" + rec.id;
+  try {
+    if (file.size <= IMPORT_MAX()) {
+      await DB.put("chunks", {rec: rec.id, i: 0, t0: 0, t1: dur || 1e9, peak: 1, mime: file.type, name: file.name, blob: file, done: false});
+    } else {
+      rec.stage = "長い音声を区切っています"; refresh(rec.id);
+      const pieces = await splitAudio(file, settings.importPiece || 600);
+      if (!pieces.length) throw new Error("音が入っていません");
+      rec.dur = pieces[pieces.length - 1].t1;
+      await DB.put("chunks", {rec: rec.id, i: 0, t0: 0, t1: rec.dur, peak: 1, mime: file.type, name: file.name, blob: file, done: true});   // 再生用（元のファイル）
+      for (const [k, x] of pieces.entries()) await DB.put("chunks", {rec: rec.id, i: k + 1, t0: x.t0, t1: x.t1, peak: x.peak, mime: "audio/wav", name: "piece.wav", blob: x.blob, done: false, play: false});
+    }
+  } catch (e) {
+    Object.assign(rec, {err: `音声を読み込めませんでした（${e.message || e}）。m4a・mp3・wav で保存するか、短く分けてください`, state: "done", stage: ""});
+    await save(rec); render(); return;
+  }
+  rec.stage = ""; await save(rec); render();
+  Pipeline.kick(rec.id);
+}
+function audioDuration(file) {
+  return new Promise(res => {
+    const a = new Audio(), url = URL.createObjectURL(file);
+    let fin = false; const done = v => { if (fin) return; fin = true; URL.revokeObjectURL(url); res(isFinite(v) && v > 0 ? v : 0); };
+    a.preload = "metadata"; a.onloadedmetadata = () => done(a.duration); a.onerror = () => done(0);
+    setTimeout(() => done(0), 8000); a.src = url;
+  });
+}
+// 16kHzモノラルに直して区切る。区切り目は «前後10秒でいちばん静かなところ» にして言葉を切らない
+async function splitAudio(file, pieceSec) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  let ctx; try { ctx = new AC({sampleRate: 16000}); } catch (e) { ctx = new AC(); }
+  let buf;
+  try { buf = await ctx.decodeAudioData(await file.arrayBuffer()); } finally { try { ctx.close(); } catch (e) {} }
+  const sr = buf.sampleRate, n = buf.length, chans = [...Array(buf.numberOfChannels)].map((_, k) => buf.getChannelData(k));
+  const mono = i => { let v = 0; for (const c of chans) v += c[i]; return v / chans.length; };
+  const step = Math.floor(Math.min(pieceSec, 22e6 / (sr * 2)) * sr);   // 1切れ 22MB 以下
+  const frame = Math.floor(sr / 10), out = [];
+  for (let s0 = 0; s0 < n;) {
+    let end = Math.min(n, s0 + step);
+    if (end < n) {
+      let best = end, bestE = Infinity;
+      for (let f = end - frame; f > end - 10 * sr && f > s0 + frame; f -= frame) {
+        let e = 0; for (let i = f; i < f + frame; i++) { const v = mono(i); e += v * v; }
+        if (e < bestE) { bestE = e; best = f + (frame >> 1); }
+      }
+      end = best;
+    }
+    const pcm = new Int16Array(end - s0); let peak = 0;
+    for (let i = s0; i < end; i++) { const v = Math.max(-1, Math.min(1, mono(i))); peak = Math.max(peak, Math.abs(v)); pcm[i - s0] = v * 0x7fff; }
+    out.push({t0: s0 / sr, t1: end / sr, peak, blob: wavBlob(pcm, sr)});
+    s0 = end;
+  }
+  return out;
+}
+function wavBlob(pcm, sr) {
+  const b = new ArrayBuffer(44), v = new DataView(b), str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF"); v.setUint32(4, 36 + pcm.length * 2, true); str(8, "WAVE"); str(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true);
+  v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, pcm.length * 2, true);
+  return new Blob([b, pcm.buffer], {type: "audio/wav"});
 }
 
 // 記録の詳細
@@ -979,7 +1115,7 @@ const Player = {
   audio: null, rec: null, chunks: [], ci: -1,
   async play(rec, t) {
     if (!this.audio) { this.audio = new Audio(); this.audio.ontimeupdate = () => this.mark(); this.audio.onended = () => this.next(); }
-    if (this.rec !== rec) { this.rec = rec; this.chunks = (await DB.chunks(rec.id)).filter(c => c.blob && c.blob.size); }
+    if (this.rec !== rec) { this.rec = rec; this.chunks = (await DB.chunks(rec.id)).filter(c => c.blob && c.blob.size && c.play !== false); }
     if (!this.chunks.length) { toast("音声が保存されていません"); return; }
     let i = this.chunks.findIndex(c => t >= c.t0 && t < c.t1); if (i < 0) i = this.chunks.findIndex(c => c.t0 >= t); if (i < 0) i = 0;
     this.load(i, Math.max(0, t - this.chunks[i].t0));
@@ -1002,14 +1138,21 @@ const Player = {
   ui() { const b = $("#pl-btn"); if (b) b.textContent = this.audio && !this.audio.paused && this.ci >= 0 ? "一時停止" : "再生"; },
 };
 function tabTranscript(el, rec) {
-  if (!rec.segs.length) { el.innerHTML = `<p class="muted">${rec.state === "rec" || Pipeline.running.has(rec.id) ? "文字起こしを待っています…" : "文字起こしはありません。"}</p>` + retransBtn(rec); bindRetrans(el, rec); return; }
+  if (!rec.segs.length) {
+    el.innerHTML = `<p class="muted">${rec.state === "rec" || Pipeline.running.has(rec.id) ? "文字起こしを待っています…" : "文字起こしはありません。"}</p>`
+      + (rec.gaps || []).map(g => `<div class="gap">${fmtTime(g[0])}〜${fmtTime(g[1])} 録音が途切れています（画面ロック・別アプリなど）</div>`).join("") + retransBtn(rec);
+    bindRetrans(el, rec); return;
+  }
   const ks = [...new Set(rec.segs.map(s => s.spk).filter(Boolean))].sort((a, b) => a - b);
   let html = `<div class="player"><button class="btn sm" id="pl-btn">再生</button><span id="pl-time" class="num small muted"></span><span class="spacer"></span><button class="btn sm" id="t-copy">コピー</button></div>`;
   if (ks.length) html += `<div class="spk-legend small"><span class="muted">話者（タップで名前を変更）:</span>${ks.map(k => `<button class="spk" data-rename="${k}" style="background:${spkColor(k)}22;color:${spkColor(k)}">${esc(spkName(rec, k))}</button>`).join("")}</div>`;
   if (rec.engine === "ai" && ks.length) html += `<p class="small muted" style="margin:0 0 6px">話者はAIが話の流れから推定したものです。違うときは発言の話者をタップして直せます。</p>`;
-  html += rec.segs.map((s, i) => `<div class="seg" data-t="${s.t}"><button class="tm" data-play="${s.t}" aria-label="${fmtTime(s.t)}から再生">${fmtTime(s.t)}</button>
+  const gaps = (rec.gaps || []).slice().sort((a, b) => a[0] - b[0]);
+  const gapRow = g => `<div class="gap">${fmtTime(g[0])}〜${fmtTime(g[1])} 録音が途切れています（画面ロック・別アプリなど）</div>`;
+  const gapsBefore = t => { let h = ""; while (gaps.length && gaps[0][0] <= t) h += gapRow(gaps.shift()); return h; };
+  html += rec.segs.map((s, i) => `${gapsBefore(s.t)}<div class="seg" data-t="${s.t}"><button class="tm" data-play="${s.t}" aria-label="${fmtTime(s.t)}から再生">${fmtTime(s.t)}</button>
     ${s.spk ? `<button class="spk" data-seg="${i}" style="background:${spkColor(s.spk)}22;color:${spkColor(s.spk)}">${esc(spkName(rec, s.spk))}</button>` : `<button class="spk muted" data-seg="${i}">話者？</button>`}
-    <div class="tx" data-edit="${i}">${esc(s.text)}</div></div>`).join("");
+    <div class="tx" data-edit="${i}">${esc(s.text)}</div></div>`).join("") + gaps.map(gapRow).join("");
   html += retransBtn(rec);
   el.innerHTML = html;
   $("#pl-btn").onclick = () => { if (Player.rec === rec && Player.ci >= 0) Player.toggle(); else Player.play(rec, 0); };
@@ -1295,14 +1438,18 @@ function viewSettings(m) {
 }
 
 // 書き出し
-function transcriptText(rec) { return rec.segs.map(s => `[${fmtTime(s.t)}] ${s.spk ? spkName(rec, s.spk) + ": " : ""}${s.text}`).join("\n"); }
+function transcriptText(rec) {
+  const rows = rec.segs.map(s => [s.t, `[${fmtTime(s.t)}] ${s.spk ? spkName(rec, s.spk) + ": " : ""}${s.text}`])
+    .concat((rec.gaps || []).map(g => [g[0], `（${fmtTime(g[0])}〜${fmtTime(g[1])} 録音が途切れています）`]));
+  return rows.sort((a, b) => a[0] - b[0]).map(r => r[1]).join("\n");
+}
 function markdown(rec, withTranscript) {
   const L = [`# ${rec.title}`, "", `- 日時: ${R.iso(new Date(rec.created))}（${WDAY[new Date(rec.created).getDay()]}） ${fmtClock(rec.created)}`, `- 長さ: ${fmtTime(rec.dur)}`];
   const ks = [...new Set(rec.segs.map(s => s.spk).filter(Boolean))];
   if (ks.length) L.push(`- 話者: ${ks.map(k => spkName(rec, k)).join("、")}`);
   if (rec.summary) for (const s of rec.summary.sections) { L.push("", `## ${s.heading}`); L.push(...(s.items.length ? s.items.map(i => `- ${i}`) : ["- （該当なし）"])); }
   if (rec.todos.length) { L.push("", "## ToDo"); for (const t of rec.todos) L.push(`- [${t.done ? "x" : " "}] ${t.who ? t.who + "：" : ""}${t.what}${t.due ? `（期限 ${fmtDue(t.due)}）` : ""}`); }
-  if (withTranscript && rec.segs.length) L.push("", "## 文字起こし", "", transcriptText(rec));
+  if (withTranscript && (rec.segs.length || (rec.gaps || []).length)) L.push("", "## 文字起こし", "", transcriptText(rec));
   return L.join("\n") + "\n";
 }
 function exportSheet(rec) {
@@ -1377,7 +1524,7 @@ window.addEventListener("beforeunload", e => { if (Recorder.active) { e.preventD
   render();
   for (const r of recs.values()) if (r.state === "proc") Pipeline.kick(r.id);
 })();
-window.__aigiji = {DB, recs, settings: () => settings, save, Pipeline, Recorder, render, ruleSummary, markdown};   // UIテスト用
+window.__aigiji = {DB, recs, settings: () => settings, save, Pipeline, Recorder, render, ruleSummary, markdown, importAudio, splitAudio};   // UIテスト用
 
 </script>
 <script>if('serviceWorker' in navigator && location.protocol.startsWith('http')){var hadSW=!!navigator.serviceWorker.controller,reloaded=false;navigator.serviceWorker.addEventListener('controllerchange',function(){if(hadSW&&!reloaded&&!(window.__aigiji&&window.__aigiji.Recorder.active)){reloaded=true;location.reload();}});navigator.serviceWorker.register('sw.js').catch(function(){});}</script>
